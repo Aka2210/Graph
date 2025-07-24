@@ -1,0 +1,12 @@
+# 忽略虛擬環境
+.venv/
+
+# 忽略 Python cache
+__pycache__/
+*.pyc
+
+# 忽略 Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# 忽略 VSCode 設定
+.vscode/
