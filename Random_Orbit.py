@@ -112,12 +112,38 @@ def generate_restricted_graph_sequence(
 
     return graph_sequence
 
+def save_graph_to_txt(G, filename):
+    with open(filename, "w") as f:
+        # === Nodes ===
+        f.write("# Nodes\n")
+        for n, attr in G.nodes(data=True):
+            x, y, z = attr["pos"]
+            # 根據節點名稱判別類型
+            if n.startswith("s"):
+                typ = "s"
+            elif n.startswith("A"):
+                typ = "v"
+            elif n.startswith("B"):
+                typ = "c"
+            elif n.startswith("d"):
+                typ = "d"
+            else:
+                typ = "?"
+            f.write(f"{n} {typ} {x:.6f} {y:.6f} {z:.6f}\n")
+
+        # === Edges ===
+        f.write("# Edges\n")
+        for u, v, attr in G.edges(data=True):
+            weight = attr["weight"]
+            f.write(f"{u} {v} {weight:.6f}\n")
+
+
 def main():
     graphs = generate_restricted_graph_sequence(
         num_satellites_per_orbit=5,
         num_sources=5,
         num_destinations=5,
-        total_time=1  # 減少輸出量觀察
+        total_time=10  # 減少輸出量觀察
     )
 
     for t, G in enumerate(graphs):
@@ -129,6 +155,8 @@ def main():
         print("Edges:")
         for u, v, attr in G.edges(data=True):
             print(f"  {u} -> {v}, dist = {attr['weight']:.2f}")
+            
+        save_graph_to_txt(G, f"graphs/graph_t{t}.txt")
 
 if __name__ == "__main__":
     main()
