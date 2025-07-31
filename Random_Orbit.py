@@ -1,6 +1,8 @@
+import argparse
+import random
 import numpy as np
 import networkx as nx
-from itertools import combinations
+from Save_And_Read_Graphs import save_graph_to_txt
 
 def spherical_to_cartesian(radius, inclination, azimuth):
     x = radius * np.sin(inclination) * np.cos(azimuth)
@@ -15,8 +17,16 @@ def add_ring_edges(G, prefix, n):
         pos_u = G.nodes[u]["pos"]
         pos_v = G.nodes[v]["pos"]
         dist = np.linalg.norm(np.array(pos_u) - np.array(pos_v))
-        G.add_edge(u, v, weight=dist)
-        G.add_edge(v, u, weight=dist)
+        G.add_edge(u, v, weight=dist, bandwidth=random.randint(0, int(2 * dist)))
+        G.add_edge(v, u, weight=dist, bandwidth=random.randint(0, int(2 * dist)))
+        
+def add_edges(G, s, d, n, m):
+    for ai in range(n):
+            for bi in range(m):
+                s_name = f"{s}{ai}"
+                d_name = f"{d}{bi}"
+                dist = np.linalg.norm(np.array(G.nodes[s_name]["pos"]) - np.array(G.nodes[d_name]["pos"]))
+                G.add_edge(s_name, d_name, weight=dist, bandwidth=random.randint(0, int(2 * dist)))
 
 def generate_restricted_graph_sequence(
     num_satellites_per_orbit=5,
@@ -77,75 +87,25 @@ def generate_restricted_graph_sequence(
             G.add_node(name, pos=pos, time=t)
 
         # === s -> A ===
-        for si in range(num_sources):
-            s_name = f"s{si}"
-            for ai in range(num_satellites_per_orbit):
-                a_name = f"A{ai}"
-                dist = np.linalg.norm(np.array(G.nodes[s_name]["pos"]) - np.array(G.nodes[a_name]["pos"]))
-                G.add_edge(s_name, a_name, weight=dist)
-
-        n = num_satellites_per_orbit
-        
-        # === A[i] <-> A[(i+1)%n] === 環狀單向連線
-        add_ring_edges(G, "A", n)
-        
-        # === B[i] <-> B[(i+1)%n] === 環狀單向連線
-        add_ring_edges(G, "B", n)
+        add_edges(G, "s", "A", num_sources, num_satellites_per_orbit)
         
         # === A -> B ===
-        for ai in range(num_satellites_per_orbit):
-            for bi in range(num_satellites_per_orbit):
-                a_name = f"A{ai}"
-                b_name = f"B{bi}"
-                dist = np.linalg.norm(np.array(G.nodes[a_name]["pos"]) - np.array(G.nodes[b_name]["pos"]))
-                G.add_edge(a_name, b_name, weight=dist)
-
+        add_edges(G, "A", "B", num_satellites_per_orbit, num_satellites_per_orbit)
+        
         # === B -> d ===
-        for bi in range(num_satellites_per_orbit):
-            b_name = f"B{bi}"
-            for di in range(num_destinations):
-                d_name = f"d{di}"
-                dist = np.linalg.norm(np.array(G.nodes[b_name]["pos"]) - np.array(G.nodes[d_name]["pos"]))
-                G.add_edge(b_name, d_name, weight=dist)
+        add_edges(G, "B", "d", num_satellites_per_orbit, num_destinations)
+        
+        # === A[i] <-> A[(i+1)%n] === 環狀單向連線
+        add_ring_edges(G, "A", num_satellites_per_orbit)
+        
+        # === B[i] <-> B[(i+1)%n] === 環狀單向連線
+        add_ring_edges(G, "B", num_satellites_per_orbit)
 
         graph_sequence.append(G)
 
     return graph_sequence
 
-def save_graph_to_txt(G, filename):
-    with open(filename, "w") as f:
-        # === Nodes ===
-        f.write("# Nodes\n")
-        for n, attr in G.nodes(data=True):
-            x, y, z = attr["pos"]
-            # 根據節點名稱判別類型
-            if n.startswith("s"):
-                typ = "s"
-            elif n.startswith("A"):
-                typ = "v"
-            elif n.startswith("B"):
-                typ = "c"
-            elif n.startswith("d"):
-                typ = "d"
-            else:
-                typ = "?"
-            f.write(f"{n} {typ} {x:.6f} {y:.6f} {z:.6f}\n")
-
-        # === Edges ===
-        f.write("# Edges\n")
-        for u, v, attr in G.edges(data=True):
-            weight = attr["weight"]
-            f.write(f"{u} {v} {weight:.6f}\n")
-
-
-def main():
-    graphs = generate_restricted_graph_sequence(
-        num_satellites_per_orbit=5,
-        num_sources=5,
-        num_destinations=5,
-        total_time=10  # 減少輸出量觀察
-    )
-
+def print_graph(graphs, save=False):
     for t, G in enumerate(graphs):
         print(f"\n=== Time t = {t} ===")
         print("Nodes:")
@@ -154,9 +114,24 @@ def main():
             print(f"  {n}: ({x:.2f}, {y:.2f}, {z:.2f})")
         print("Edges:")
         for u, v, attr in G.edges(data=True):
-            print(f"  {u} -> {v}, dist = {attr['weight']:.2f}")
-            
-        save_graph_to_txt(G, f"graphs/graph_t{t}.txt")
+            print(f"  {u} -> {v}, dist = {attr['weight']:.2f} bw = {attr["bandwidth"]}")
+        
+        if(save):
+            save_graph_to_txt(G, f"graphs/graph_t{t}.txt")
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--store', action='store_true', help='儲存生成的Graphs')
+    args = parser.parse_args()
+    
+    graphs = generate_restricted_graph_sequence(
+        num_satellites_per_orbit=5,
+        num_sources=1,
+        num_destinations=5,
+        total_time=10  # 減少輸出量觀察
+    )
+
+    print_graph(graphs, args.store)
 
 if __name__ == "__main__":
     main()
