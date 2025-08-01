@@ -67,24 +67,24 @@ def generate_restricted_graph_sequence(
             phi_t = phi0 + angular_velocity * t
             x, y, z = spherical_to_cartesian(radius, inclination1, phi_t)
             name = f"A{i}"
-            G.add_node(name, pos=(x, y, z), time=t)
+            G.add_node(name, pos=(x, y, z), time=t, type="satellite")
 
         # === Add cache B ===
         for i, phi0 in enumerate(initial_phis):
             phi_t = phi0 + angular_velocity * t
             x, y, z = spherical_to_cartesian(radius, inclination2, phi_t)
             name = f"B{i}"
-            G.add_node(name, pos=(x, y, z), time=t)
+            G.add_node(name, pos=(x, y, z), time=t, type="cache")
 
         # === Add sources ===
         for i, pos in enumerate(source_positions):
             name = f"s{i}"
-            G.add_node(name, pos=pos, time=t)
+            G.add_node(name, pos=pos, time=t, type="src")
 
         # === Add destinations ===
         for i, pos in enumerate(dest_positions):
             name = f"d{i}"
-            G.add_node(name, pos=pos, time=t)
+            G.add_node(name, pos=pos, time=t, type="dest")
 
         # === s -> A ===
         add_edges(G, "s", "A", num_sources, num_satellites_per_orbit)
@@ -111,7 +111,7 @@ def print_graph(graphs, save=False):
         print("Nodes:")
         for n, attr in G.nodes(data=True):
             x, y, z = attr["pos"]
-            print(f"  {n}: ({x:.2f}, {y:.2f}, {z:.2f})")
+            print(f"  {n}: ({x:.2f}, {y:.2f}, {z:.2f}) type: {attr["type"]}")
         print("Edges:")
         for u, v, attr in G.edges(data=True):
             print(f"  {u} -> {v}, dist = {attr['weight']:.2f} bw = {attr["bandwidth"]}")
@@ -128,7 +128,7 @@ def main():
         num_satellites_per_orbit=5,
         num_sources=1,
         num_destinations=5,
-        total_time=10  # 減少輸出量觀察
+        total_time=10
     )
 
     print_graph(graphs, args.store)

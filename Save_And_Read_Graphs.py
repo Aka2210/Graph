@@ -5,19 +5,8 @@ def save_graph_to_txt(G, filename):
         # === Nodes ===
         f.write("# Nodes\n")
         for n, attr in G.nodes(data=True):
-            x, y, z = attr["pos"]
-            # 根據節點名稱判別類型
-            if n.startswith("s"):
-                typ = "s"
-            elif n.startswith("A"):
-                typ = "v"
-            elif n.startswith("B"):
-                typ = "c"
-            elif n.startswith("d"):
-                typ = "d"
-            else:
-                typ = "?"
-            f.write(f"{n} {typ} {x:.6f} {y:.6f} {z:.6f}\n")
+            x, y, z = attr["pos"]      
+            f.write(f"{n} {attr["type"]} {x:.6f} {y:.6f} {z:.6f}\n")
 
         # === Edges ===
         f.write("# Edges\n")
@@ -43,7 +32,7 @@ def load_graph_from_txt(filename: str) -> nx.DiGraph:
         
         if mode == "node":
             name, typ, x, y, z = line.split()
-            G.add_node(name, pos=(float(x), float(y), float(z)))
+            G.add_node(name, pos=(float(x), float(y), float(z)), type=typ)
         elif mode == "edge":
             u, v, weight, bandwidth = line.split()
             G.add_edge(u, v, weight=float(weight), bandwidth=bandwidth)
