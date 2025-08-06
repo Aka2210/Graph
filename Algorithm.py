@@ -1,39 +1,48 @@
-from queue import Queue
 import networkx as nx
-from typing import List
+import heapq
+from typing import List, Set, Tuple
 
-def MBBSP_multicast(graph: nx.Graph, s: str, destinations: List[str]):
-    # Step 1: 建 MaxST
-    maxst = nx.maximum_spanning_tree(graph, weight='bandwidth')
+def single_source_MBBSP(graph: nx.DiGraph, sources: Set[str]) -> Tuple[dict, dict]:
+    bottleneck = {node: 0 for node in graph.nodes}
+    prev = {}
 
-    # 和原圖相同型態（Graph / DiGraph）
-    multicast_tree = graph.__class__()
-    min_bw = float('inf')
-    mbb_result = min_bw
-    
-    # Step 2: 找 source → dest 路徑 & 計算 MBB
-    for dest in destinations:
-        path = nx.shortest_path(maxst, source=s, target=dest)
-        
-        for u, v in zip(path[:-1], path[1:]):
-            # 複製節點屬性
-            if not multicast_tree.has_node(u):
-                multicast_tree.add_node(u, **graph.nodes[u])
-            if not multicast_tree.has_node(v):
-                multicast_tree.add_node(v, **graph.nodes[v])
+    heap = []
+    for s in sources:
+        bottleneck[s] = float('inf')
+        heapq.heappush(heap, (-bottleneck[s], s))
 
-            # 複製邊屬性（完整）
-            if not multicast_tree.has_edge(u, v):
-                multicast_tree.add_edge(u, v, **graph[u][v])
+    while heap:
+        cur_bw_neg, u = heapq.heappop(heap)
+        cur_bw = -cur_bw_neg
 
-            # 更新 MBB
-            bw = graph[u][v]['bandwidth']
-            min_bw = min(min_bw, bw)
+        for v in graph.successors(u):
+            edge_bw = graph[u][v]['bandwidth']
+            new_bw = min(cur_bw, edge_bw)
+            if new_bw > bottleneck[v]:
+                bottleneck[v] = new_bw
+                prev[v] = u
+                heapq.heappush(heap, (-new_bw, v))
 
-        mbb_result = min_bw
+    return bottleneck, prev
 
-    return mbb_result
+def MBBSP_multicast(graph: nx.DiGraph, s: str, destinations: List[str]) -> float:
+    connected: Set[str] = {s}
+    remaining = set(destinations)
+    total_min_bottleneck = float('inf')
 
+    while remaining:
+        bottleneck, prev = single_source_MBBSP(graph, connected)
+
+        best_d = max(remaining, key=lambda d: bottleneck[d])
+        best_bw = bottleneck[best_d]
+
+        if best_bw == 0:
+            raise ValueError("No path found to some destination.")
+
+        remaining.remove(best_d)
+        total_min_bottleneck = min(total_min_bottleneck, best_bw)
+
+    return total_min_bottleneck
 
 def LMBBSP_multicast(graph: nx.DiGraph, s: str, destinations: List[str], alpha: float, c: int):
     threshold = max(MBBSP_multicast(graph, s, destinations) * (1 - alpha), graph.nodes[s]["bandwidth"])
