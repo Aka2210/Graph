@@ -1,5 +1,6 @@
 import networkx as nx
 import heapq
+from Random_Orbit import print_graph
 from typing import List, Set, Tuple
 
 def single_source_MBBSP(graph: nx.DiGraph, sources: Set[str]) -> Tuple[dict, dict]:
@@ -84,7 +85,7 @@ def DMTS(time_slots: int, graphs: List[List[nx.Graph]]):
         for i in range(len(graphs[t])):
             for j in range(len(graphs[t - 1])):
                 G1 = graphs[t][i]
-                G2 = graphs[t][j]
+                G2 = graphs[t - 1][j]
                 edges1 = set(G1.edges())
                 edges2 = set(G2.edges())
 
