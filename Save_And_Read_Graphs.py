@@ -6,7 +6,7 @@ def save_graph_to_txt(G, filename):
         f.write("# Nodes\n")
         for n, attr in G.nodes(data=True):
             x, y, z = attr["pos"]      
-            f.write(f"{n} {attr["type"]} {x:.6f} {y:.6f} {z:.6f}\n")
+            f.write(f"{n} {attr["type"]} {x:.6f} {y:.6f} {z:.6f} {attr['bandwidth']}\n")
 
         # === Edges ===
         f.write("# Edges\n")
@@ -31,10 +31,10 @@ def load_graph_from_txt(filename: str) -> nx.DiGraph:
             continue
         
         if mode == "node":
-            name, typ, x, y, z = line.split()
-            G.add_node(name, pos=(float(x), float(y), float(z)), type=typ)
+            name, typ, x, y, z, bw = line.split()
+            G.add_node(name, pos=(float(x), float(y), float(z)), type=typ, bandwidth=int(bw))
         elif mode == "edge":
             u, v, weight, bandwidth = line.split()
-            G.add_edge(u, v, weight=float(weight), bandwidth=bandwidth)
+            G.add_edge(u, v, weight=float(weight), bandwidth=int(bandwidth))
     
     return G

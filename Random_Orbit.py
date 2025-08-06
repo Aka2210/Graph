@@ -17,8 +17,8 @@ def add_ring_edges(G, prefix, n):
         pos_u = G.nodes[u]["pos"]
         pos_v = G.nodes[v]["pos"]
         dist = np.linalg.norm(np.array(pos_u) - np.array(pos_v))
-        G.add_edge(u, v, weight=dist, bandwidth=random.randint(0, int(2 * dist)))
-        G.add_edge(v, u, weight=dist, bandwidth=random.randint(0, int(2 * dist)))
+        G.add_edge(u, v, weight=dist, bandwidth=random.randint(10, 30))
+        G.add_edge(v, u, weight=dist, bandwidth=random.randint(10, 30))
         
 def add_edges(G, s, d, n, m):
     for ai in range(n):
@@ -26,7 +26,7 @@ def add_edges(G, s, d, n, m):
                 s_name = f"{s}{ai}"
                 d_name = f"{d}{bi}"
                 dist = np.linalg.norm(np.array(G.nodes[s_name]["pos"]) - np.array(G.nodes[d_name]["pos"]))
-                G.add_edge(s_name, d_name, weight=dist, bandwidth=random.randint(0, int(2 * dist)))
+                G.add_edge(s_name, d_name, weight=dist, bandwidth=random.randint(10, 40))
 
 def generate_restricted_graph_sequence(
     num_satellites_per_orbit=5,
@@ -58,6 +58,7 @@ def generate_restricted_graph_sequence(
     ]
 
     graph_sequence = []
+    src_bw_sequence = {}
 
     for t in range(total_time):
         G = nx.DiGraph()
@@ -67,24 +68,26 @@ def generate_restricted_graph_sequence(
             phi_t = phi0 + angular_velocity * t
             x, y, z = spherical_to_cartesian(radius, inclination1, phi_t)
             name = f"A{i}"
-            G.add_node(name, pos=(x, y, z), time=t, type="satellite")
+            G.add_node(name, pos=(x, y, z), time=t, type="satellite", bandwidth=0)
 
         # === Add cache B ===
         for i, phi0 in enumerate(initial_phis):
             phi_t = phi0 + angular_velocity * t
             x, y, z = spherical_to_cartesian(radius, inclination2, phi_t)
             name = f"B{i}"
-            G.add_node(name, pos=(x, y, z), time=t, type="cache")
+            G.add_node(name, pos=(x, y, z), time=t, type="cache", bandwidth=0)
 
         # === Add sources ===
         for i, pos in enumerate(source_positions):
             name = f"s{i}"
-            G.add_node(name, pos=pos, time=t, type="src")
+            if i not in src_bw_sequence:
+                src_bw_sequence[i] = random.randint(15, 20) 
+            G.add_node(name, pos=pos, time=t, type="src", bandwidth=src_bw_sequence[i])
 
         # === Add destinations ===
         for i, pos in enumerate(dest_positions):
             name = f"d{i}"
-            G.add_node(name, pos=pos, time=t, type="dest")
+            G.add_node(name, pos=pos, time=t, type="dest", bandwidth=0)
 
         # === s -> A ===
         add_edges(G, "s", "A", num_sources, num_satellites_per_orbit)
@@ -105,17 +108,19 @@ def generate_restricted_graph_sequence(
 
     return graph_sequence
 
-def print_graph(graphs, save=False):
+def print_graph(G):
+    print("Nodes:")
+    for n, attr in G.nodes(data=True):
+        x, y, z = attr["pos"]
+        print(f"  {n}: ({x:.2f}, {y:.2f}, {z:.2f}) type: {attr["type"]} bw: {attr["bandwidth"]}")
+    print("Edges:")
+    for u, v, attr in G.edges(data=True):
+        print(f"  {u} -> {v}, dist = {attr['weight']:.2f} bw = {attr["bandwidth"]}")
+
+def print_graphs(graphs, save=False):
     for t, G in enumerate(graphs):
         print(f"\n=== Time t = {t} ===")
-        print("Nodes:")
-        for n, attr in G.nodes(data=True):
-            x, y, z = attr["pos"]
-            print(f"  {n}: ({x:.2f}, {y:.2f}, {z:.2f}) type: {attr["type"]}")
-        print("Edges:")
-        for u, v, attr in G.edges(data=True):
-            print(f"  {u} -> {v}, dist = {attr['weight']:.2f} bw = {attr["bandwidth"]}")
-        
+        print_graph(G)
         if(save):
             save_graph_to_txt(G, f"graphs/graph_t{t}.txt")
 
@@ -131,7 +136,7 @@ def main():
         total_time=10
     )
 
-    print_graph(graphs, args.store)
+    print_graphs(graphs, args.store)
 
 if __name__ == "__main__":
     main()
