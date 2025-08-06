@@ -1,79 +1,68 @@
+from queue import Queue
 import networkx as nx
-from typing import List, Set
-import heapq
+from typing import List
 
-def MBBSP(graph: nx.DiGraph, s: str, t: str):
-    bottleneck = {node: 0 for node in graph.nodes}
-    bottleneck[s] = float('inf')
-    prev = {}
+def MBBSP_multicast(graph: nx.Graph, s: str, destinations: List[str]):
+    # Step 1: 建 MaxST
+    maxst = nx.maximum_spanning_tree(graph, weight='bandwidth')
 
-    # 最大堆（頻寬大的優先）
-    heap = [(-bottleneck[s], s)] 
+    # 和原圖相同型態（Graph / DiGraph）
+    multicast_tree = graph.__class__()
+    min_bw = float('inf')
+    mbb_result = min_bw
+    
+    # Step 2: 找 source → dest 路徑 & 計算 MBB
+    for dest in destinations:
+        path = nx.shortest_path(maxst, source=s, target=dest)
+        
+        for u, v in zip(path[:-1], path[1:]):
+            # 複製節點屬性
+            if not multicast_tree.has_node(u):
+                multicast_tree.add_node(u, **graph.nodes[u])
+            if not multicast_tree.has_node(v):
+                multicast_tree.add_node(v, **graph.nodes[v])
 
-    while heap:
-        cur_bw_neg, u = heapq.heappop(heap)
-        cur_bw = -cur_bw_neg
+            # 複製邊屬性（完整）
+            if not multicast_tree.has_edge(u, v):
+                multicast_tree.add_edge(u, v, **graph[u][v])
 
-        if u == t:
+            # 更新 MBB
+            bw = graph[u][v]['bandwidth']
+            min_bw = min(min_bw, bw)
+
+        mbb_result = min_bw
+
+    return mbb_result
+
+
+def LMBBSP_multicast(graph: nx.DiGraph, s: str, destinations: List[str], alpha: float, c: int):
+    threshold = max(MBBSP_multicast(graph, s, destinations) * (1 - alpha), graph.nodes[s]["bandwidth"])
+    edges_to_keep = [
+            (u, v) for u, v, data in graph.edges(data=True)
+            if data.get('bandwidth', 0) >= threshold
+        ]
+    H = graph.edge_subgraph(edges_to_keep).copy()
+    
+    results = []
+    
+    for _ in range(c):
+        pred, dist = nx.dijkstra_predecessor_and_distance(H, source=s, weight=None)
+
+        if any(not pred.get(d) for d in destinations):
             break
 
-        for v in graph.successors(u):
-            edge_bw = graph[u][v]['bandwidth']
-            new_bw = min(cur_bw, edge_bw)
-            if new_bw > bottleneck[v]:
-                bottleneck[v] = new_bw
-                prev[v] = u
-                heapq.heappush(heap, (-new_bw, v))
+        path_edges = set()
+        for dest in destinations:
+            cur = dest
+            while cur != s and pred[cur]:
+                p = pred[cur][0]
+                path_edges.add((p, cur))
+                cur = p
 
-    # reconstruct path
-    if t not in prev and s != t:
-        return None, 0
+        subG = H.edge_subgraph(path_edges).copy()
+        results.append(subG)
 
-    path = []
-    cur = t
-    while cur != s:
-        path.append(cur)
-        cur = prev[cur]
-    path.append(s)
-    path.reverse()
+        H.remove_edges_from(path_edges)
 
-    return path, bottleneck[t]
-
-
-def MBBSP_multicast(graph: nx.DiGraph, s: str, destinations: List[str]):
-    tree = nx.DiGraph()
-    tree.add_node(s, **graph.nodes[s])
-    connected: Set[str] = {s}
-    remaining = set(destinations)
-    total_min_bottleneck = float('inf')
-
-    while remaining:
-        best_path = None
-        best_bw = -1
-        best_d = None
-
-        # 嘗試從目前已加入的任一節點 u，去連接任一目的地 d
-        for u in connected:
-            for d in remaining:
-                path, bw = MBBSP(graph, u, d)
-                if path and bw > best_bw:
-                    best_path = path
-                    best_bw = bw
-                    best_d = d
-
-        if not best_path:
-            raise ValueError("No path found to some destination.")
-
-        # 加入這條最好的 path
-        for i in range(len(best_path) - 1):
-            u, v = best_path[i], best_path[i + 1]
-            if not tree.has_node(v):
-                tree.add_node(v, **graph.nodes[v])
-            tree.add_edge(u, v, **graph[u][v])
-            connected.add(v)
-
-        remaining.remove(best_d)
-        total_min_bottleneck = min(total_min_bottleneck, best_bw)
-
-    return tree, total_min_bottleneck
-
+    return results
+    
