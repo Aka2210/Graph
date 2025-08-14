@@ -1,6 +1,5 @@
 import networkx as nx
 import heapq
-from Random_Orbit import print_graph
 from typing import List, Set, Tuple
 
 def single_source_MBBSP(graph: nx.DiGraph, sources: Set[str]) -> Tuple[dict, dict]:
@@ -15,7 +14,7 @@ def single_source_MBBSP(graph: nx.DiGraph, sources: Set[str]) -> Tuple[dict, dic
     while heap:
         cur_bw_neg, u = heapq.heappop(heap)
         cur_bw = -cur_bw_neg
-
+        
         for v in graph.successors(u):
             edge_bw = graph[u][v]['bandwidth']
             new_bw = min(cur_bw, edge_bw)
@@ -53,6 +52,23 @@ def LMBBSP_multicast(graph: nx.DiGraph, s: str, destinations: List[str], alpha: 
         ]
     H = graph.edge_subgraph(edges_to_keep).copy()
     
+    # 檢查可達性（pred 不含不可達節點）
+    try:
+        pred, dist = nx.dijkstra_predecessor_and_distance(H, source=s, weight=None)
+    except nx.NodeNotFound as e:
+        # 這裡理論上不會再出現（前面已檢查），保留以便訊息更友善
+        raise nx.NodeNotFound(f"{e}. Check threshold={threshold:.2f} and alpha.") from e
+    except nx.NetworkXNoPath as e:
+        raise ValueError(
+            f"No path from {s} to at least one destination under threshold={threshold:.2f}."
+        ) from e
+
+    unreachable = [d for d in destinations if d not in pred]
+    if unreachable:
+        raise ValueError(
+            f"Unreachable destinations from {s} in H: {unreachable} (threshold={threshold:.2f})."
+        )
+    
     results = []
     
     for _ in range(c):
@@ -76,7 +92,7 @@ def LMBBSP_multicast(graph: nx.DiGraph, s: str, destinations: List[str], alpha: 
 
     return results
 
-def DMTS(time_slots: int, graphs: List[List[nx.Graph]]):
+def DMTS(time_slots: int, graphs: List[List[nx.DiGraph]]):
     C = {}
     parents = {(0, i): 0 for i in range(len(graphs[0]))}
     dp = {}
