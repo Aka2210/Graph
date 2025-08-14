@@ -1,13 +1,12 @@
 import networkx as nx
-from Random_Orbit import print_graphs
-from Save_And_Read_Graphs import load_graph_from_txt
+from Debug import print_graphs
+from Save_And_Read_Graphs import load_graph_sequence_from_txt
 import Algorithm
 
+DIR_PATH = "output_graphs"
+
 def main():
-    graphs = []
-    for t in range(10):
-        G = load_graph_from_txt(f"graphs/graph_t{t}.txt")
-        graphs.append(G)
+    graphs = load_graph_sequence_from_txt(path=DIR_PATH, idx=1)
 
     results = []
     T = []
@@ -15,7 +14,10 @@ def main():
     candidates = 5
     time_slots = 10
     for t, G in enumerate(graphs):
-        T.append(Algorithm.LMBBSP_multicast(G, "s0", [node for node, attr in G.nodes(data=True) if attr["type"] == "dest"], alpha=alpha, c=candidates))
+        src_nodes = [node for node, attr in G.nodes(data=True) if attr["type"] == "src"]
+        dest_nodes = [node for node, attr in G.nodes(data=True) if attr["type"] == "dest"]
+        # src_nodes[0]為單源多目的算法, 直接傳入src_nodes為多源(尚未完成, 需討論)
+        T.append(Algorithm.LMBBSP_multicast(G, src_nodes[0], dest_nodes, alpha=alpha, c=candidates))
     results = Algorithm.DMTS(time_slots=time_slots, graphs=T)
     
     print_graphs(results)
