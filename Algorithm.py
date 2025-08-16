@@ -1,6 +1,20 @@
+from asyncio import Queue
+from collections import defaultdict, deque
+from enum import Enum
+import math
+import random
 import networkx as nx
 import heapq
-from typing import List, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
+
+
+class OffPA(Enum):
+    USER = "dest"
+    SAT = "satellite"
+    CLOUD = "cloud"
+    SRC = "src"
+    REGION = "region"
+    WEIGHT = "latency"
 
 def single_source_MBBSP(graph: nx.DiGraph, sources: Set[str]) -> Tuple[dict, dict]:
     bottleneck = {node: 0 for node in graph.nodes}
@@ -144,3 +158,256 @@ def DMTS(time_slots: int, graphs: List[List[nx.DiGraph]]):
     
     result.reverse()
     return result
+
+def Setting_Starfront_Thd(G: nx.DiGraph, default_thd: float = 50.0):
+    rset: Set[Any] = set()
+    for _, d in G.nodes(data=True):
+        if d["type"] != OffPA.USER.value:
+            continue
+        r = d[OffPA.REGION.value]
+        if r is not None:
+            rset.add(r)
+            
+    # 暫時統一所有區域的Thd，後續再調整
+    return {r: default_thd for r in sorted(rset)}
+
+def multi_src_to_one_dest_subgraph(G, srcs, dest, weight="latency", with_attrs=False):
+    """
+    在有向圖 G 上，計算多個 source 到同一個 dest 的最短路徑（用反向圖一次跑完）。
+    回傳：
+      paths:   dict[src] = (dist, [src, ..., dest])                # 只含 reachable 的 src
+      nodes:   set，所有路徑上出現過的節點
+      edges:   set，所有路徑上的有向邊 (u, v)（方向為原圖方向：src→...→dest）
+      nodes_attr / edges_attr（可選）：節點/邊的屬性 dict
+    """
+    RG = G.reverse(copy=False)    # 反向視圖
+    need = set(srcs)
+    dist = {dest: 0.0}
+    parent = {dest: None}
+    pq = [(0.0, dest)]
+
+    paths = {}           # src -> (dist, path_nodes from src..dest)
+    nodes_used = set()
+    edges_used = set()
+
+    while pq and need:
+        d, u = heapq.heappop(pq)
+        if d != dist.get(u, math.inf):
+            continue
+
+        if u in need:
+            # 在 RG 的路徑 u..dest，反過來就是 G 的 src..dest
+            path = []
+            x = u
+            while x is not None:
+                path.append(x)
+                x = parent.get(x)
+            # path 現在是 [src, ..., dest]（已符合原圖方向）
+            paths[u] = (d, path)
+            need.remove(u)
+
+            # 收集 nodes / edges
+            nodes_used.update(path)
+            for a, b in zip(path, path[1:]):
+                edges_used.add((a, b))
+
+            if not need:
+                break
+
+        for v in RG.successors(u):   # 等價於 G.predecessors(u)
+            w = RG[u][v].get(weight, 1.0)
+            nd = d + w
+            if nd < dist.get(v, math.inf):
+                dist[v] = nd
+                parent[v] = u
+                heapq.heappush(pq, (nd, v))
+
+    result = {
+        "paths": paths,
+        "nodes": nodes_used,
+        "edges": edges_used,
+    }
+
+    if with_attrs:
+        nodes_attr = {n: dict(G.nodes[n]) for n in nodes_used}
+        edges_attr = {(u, v): dict(G[u][v]) for (u, v) in edges_used if G.has_edge(u, v)}
+        result["nodes_attr"] = nodes_attr
+        result["edges_attr"] = edges_attr
+
+    return result
+
+
+def add_nodes_edges_with_attrs(DG, G, nodes, edges, nodes_attr=None, edges_attr=None):
+    """
+    將 nodes / edges（以及可選屬性）從 G 複製到 DG。
+    - 若 nodes_attr / edges_attr 為 None，則直接從 G 抓當前屬性。
+    """
+    # 加節點
+    for n in nodes:
+        if nodes_attr is not None and n in nodes_attr:
+            DG.add_node(n, **nodes_attr[n])
+        else:
+            DG.add_node(n, **G.nodes[n])
+
+    # 加邊
+    for (u, v) in edges:
+        if edges_attr is not None and (u, v) in edges_attr:
+            DG.add_edge(u, v, **edges_attr[(u, v)])
+        else:
+            DG.add_edge(u, v, **G[u][v])
+    
+    return DG
+
+def STARFRONT_sequences(graphs: List[nx.DiGraph], Thd_Latency: dict[str, float] = None):
+    if not Thd_Latency:
+        Thd_Latency = Setting_Starfront_Thd(graphs[0])
+        
+    res: List[nx.DiGraph] = []
+    
+    for i in range(len(graphs)):
+        res.append(STARFRONT(G=graphs[i], Thd_Latency=Thd_Latency))
+    return res
+    
+def STARFRONT(G: nx.DiGraph, Thd_Latency: dict[str, float]):
+    RQ_remain = {n for n, d in G.nodes(data=True) if d["type"] == OffPA.USER.value}
+    dests = [n for n, d in G.nodes(data=True) if d["type"] == OffPA.USER.value]
+    srcs  = [n for n, d in G.nodes(data=True) if d["type"] == "src"]
+    sats  = [n for n, d in G.nodes(data=True) if d["type"] == "satellite"]
+    clouds= [n for n, d in G.nodes(data=True) if d["type"] == "cloud"]
+    DG = nx.DiGraph()
+    
+    def CT_dist(DG: nx.DiGraph):
+        res = 0
+        srcs = [n for n, d in DG.nodes(data=True) if d.get("type") == "src"]
+
+        for src in srcs:
+            q = deque([src])
+            visited = set()
+
+            while q:
+                u = q.popleft()
+                if u in visited:
+                    continue
+                visited.add(u)
+
+                for v in DG.successors(u):
+                    q.append(v)
+                    data_size = DG.nodes[u].get("data_size", 0.0)
+                    cost = DG[u][v].get("cost_traffic", 0.0)
+                    res += data_size * cost
+
+        return res
+    
+    def CT_storage(DG: nx.DiGraph):
+        def cost_cache(node_attr, size):
+            """
+            計算單一節點的 storage cost
+            node_attr: G.nodes[i] 的 dict
+            size: 要放的資料大小 (GB)
+            """
+            d = node_attr.get("d", 0.0)
+            z = node_attr.get("z", 1.0)
+            gamma = node_attr.get("gamma", 1.0)
+            model = node_attr.get("storage_model", "linear")
+
+            if model == "linear":
+                f_size = d * size
+            elif model == "concave":
+                f_size = d * (size ** z)
+            else:
+                raise ValueError(f"Unknown storage model: {model}")
+
+            # 雲端 γ=1，衛星 γ>=1
+            return gamma * f_size
+
+        res = 0.0
+        # 總內容大小 (所有 Wk 的和)
+        W_total = sum(DG.nodes[n].get("data_size", 0.0) for n, d in DG.nodes(data=True) if d.get("type") == "src")
+
+        for i, attr in DG.nodes(data=True):
+            if attr["type"] in ("cloud", "satellite"):
+                # 這裡假設 x(i)=1 代表 DG 裡面有這個點
+                res += cost_cache(attr, W_total)
+        return res
+    
+    def CT_access(DG: nx.DiGraph):
+        res = 0.0
+        # 所有用戶請求節點
+        users  = [n for n, d in DG.nodes(data=True) if d.get("type") == OffPA.USER.value]
+
+        for r in users:
+            q = deque([r])
+            visited = set()
+            
+            while q:
+                u = q.popleft()
+                if u in visited:
+                    continue
+                visited.add(u)
+
+                for v in DG.successors(u):  # 只會走到 caches
+                    q.append(v)
+                    sz = DG.nodes[u].get("req_size", 0.0)
+                    cost = DG[u][v].get("cost_traffic", 0.0)
+                    res += sz * cost
+        return res
+        
+    def CT(DG: nx.DiGraph):
+        if not DG:
+            return 0
+        return CT_dist(DG) + CT_storage(DG) + CT_access(DG)
+    
+    while RQ_remain:
+        size_j = {}
+        candidate = defaultdict(dict)   # candidate[j][req] = best_latency(req -> j)
+        res_cache = {}                  # 可選：暫存每個 j 的路徑結果，後面 extend DG 會用到
+
+        for j in (sats + clouds):
+            # 一次取回所有 req_r→j 的最短路徑與距離
+            res = multi_src_to_one_dest_subgraph(
+                G,
+                srcs=list(RQ_remain),
+                dest=j,
+                weight=OffPA.WEIGHT.value,
+                with_attrs=True,  # 之後 add_nodes_edges_with_attrs 會用到
+            )
+            res_cache[j] = res
+
+            # res["paths"]: dict[src] = (dist, [src,...,j])
+            for req_r, (dist_rj, path) in res["paths"].items():
+                thd = Thd_Latency.get(G.nodes[req_r][OffPA.REGION.value], float("inf"))
+                if dist_rj <= thd:
+                    candidate[j][req_r] = dist_rj
+            
+        for j in (sats + clouds):
+            size_j[j] = sum(G.nodes[r]["req_size"] for r in candidate[j].keys())
+        
+        j_bar = float("-inf")
+        new_DG = DG
+        for j in (sats + clouds):
+            tmp_DG = DG.copy()
+            extend = multi_src_to_one_dest_subgraph(G, (list(candidate[j].keys()) + srcs), j, OffPA.WEIGHT.value, True)
+            tmp_DG = add_nodes_edges_with_attrs(tmp_DG, G, 
+                                        nodes=extend["nodes"],
+                                        edges=extend["edges"],
+                                        nodes_attr=extend.get("nodes_attr"),
+                                        edges_attr=extend.get("edges_attr")
+                                        )
+            dCT = CT(tmp_DG) - CT(DG)
+            if dCT <= 0:
+                curr_j_bar = float("-inf")
+            else:
+                curr_j_bar = size_j[j] / dCT
+                
+            if curr_j_bar > j_bar:
+                j_bar = curr_j_bar
+                new_DG = tmp_DG.copy()
+        new_RQ_remain = RQ_remain - new_DG.nodes
+        
+        if new_RQ_remain == RQ_remain:
+            print(f"{cnt}: {RQ_remain}\n{new_DG}\n{new_RQ_remain}")
+            raise ValueError("No path found to some destination.")
+        else:
+            DG = new_DG
+            RQ_remain = new_RQ_remain
+    return new_DG
