@@ -1,3 +1,4 @@
+import os
 import networkx as nx
 from Debug import print_graphs
 from Save_And_Read_Graphs import load_graph_sequence_from_txt
@@ -6,7 +7,12 @@ import Algorithm
 DIR_PATH = "output_graphs"
 
 def main():
-    graphs = load_graph_sequence_from_txt(path=DIR_PATH, idx=1)
+    dir_path = "output_graphs"
+    os.makedirs(dir_path, exist_ok=True)
+
+    # 取得資料夾內的 txt 檔數量
+    txt_count = len([f for f in os.listdir(dir_path) if f.endswith(".txt")])
+    graphs = load_graph_sequence_from_txt(path=DIR_PATH, idx=txt_count)
 
     results = []
     T = []
