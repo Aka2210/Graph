@@ -331,7 +331,7 @@ def generate_graph_sequence_random(
                     latency_ms = realistic_latency(pos[s], pos[target], G.nodes[s]["type"], G.nodes[target]["type"])
                     add_edge_with_cost(G, s, target, latency_ms, bw)
 
-        # satellite/cloud -> d
+        # satellite/cloud <-> d
         for dn in dests:
             for sl in sats + clouds:
                 dist_km = euclid_latency(pos[sl], pos[dn])
@@ -339,6 +339,7 @@ def generate_graph_sequence_random(
                     bw = _sample_edge_bw(avg_src_bw, rng)
                     latency_ms = realistic_latency(pos[sl], pos[dn], G.nodes[sl]["type"], G.nodes[dn]["type"])
                     add_edge_with_cost(G, sl, dn, latency_ms, bw)
+                    add_edge_with_cost(G, dn, sl, latency_ms, bw)
 
         # sat <-> sat (ISL)
         for i in range(len(sats)):
@@ -403,7 +404,7 @@ def main():
     txt_count = len([f for f in os.listdir(dir_path) if f.endswith(".txt")])
 
     # seed 根據檔案數量決定
-    graphs = generate_graph_sequence_random(seed=txt_count + 1, n_total=100, total_time=1)
+    graphs = generate_graph_sequence_random(seed=txt_count + 1, n_total=100, total_time=10)
 
     # print_graphs(graphs)
     
