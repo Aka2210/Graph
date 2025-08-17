@@ -355,8 +355,9 @@ def STARFRONT(G: nx.DiGraph, Thd_Latency: dict[str, float]):
     def CT(DG: nx.DiGraph):
         if not DG:
             return 0
+        
         return CT_dist(DG) + CT_storage(DG) + CT_access(DG)
-    
+    cnt = 0
     while RQ_remain:
         size_j = {}
         candidate = defaultdict(dict)   # candidate[j][req] = best_latency(req -> j)
@@ -382,7 +383,8 @@ def STARFRONT(G: nx.DiGraph, Thd_Latency: dict[str, float]):
         for j in (sats + clouds):
             size_j[j] = sum(G.nodes[r]["req_size"] for r in candidate[j].keys())
         
-        j_bar = float("-inf")
+        j_bar_val = float("-inf")
+        j_bar = -1
         new_DG = DG
         for j in (sats + clouds):
             tmp_DG = DG.copy()
@@ -395,14 +397,15 @@ def STARFRONT(G: nx.DiGraph, Thd_Latency: dict[str, float]):
                                         )
             dCT = CT(tmp_DG) - CT(DG)
             if dCT <= 0:
-                curr_j_bar = float("-inf")
+                curr_j_bar_val = float("-inf")
             else:
-                curr_j_bar = size_j[j] / dCT
+                curr_j_bar_val = size_j[j] / dCT
                 
-            if curr_j_bar > j_bar:
-                j_bar = curr_j_bar
+            if curr_j_bar_val > j_bar_val:
+                j_bar_val = curr_j_bar_val
                 new_DG = tmp_DG.copy()
-        new_RQ_remain = RQ_remain - new_DG.nodes
+                j_bar = j
+        new_RQ_remain = RQ_remain - set(candidate[j_bar].keys())
         
         if new_RQ_remain == RQ_remain:
             print(f"{cnt}: {RQ_remain}\n{new_DG}\n{new_RQ_remain}")
@@ -410,4 +413,5 @@ def STARFRONT(G: nx.DiGraph, Thd_Latency: dict[str, float]):
         else:
             DG = new_DG
             RQ_remain = new_RQ_remain
+        cnt += 1
     return new_DG
