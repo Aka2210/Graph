@@ -10,3 +10,10 @@ __pycache__/
 
 # 忽略 VSCode 設定
 .vscode/
+debug_commit.patch
+main.patch
+random_orbit_commit.patch
+save_load_commit.patch
+commit.patch
+algorithm_commit.patch
+output_graphs/*
