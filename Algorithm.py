@@ -7,6 +7,7 @@ import networkx as nx
 import heapq
 from typing import Any, Dict, List, Set, Tuple
 
+INF = float("inf")
 
 class OffPA(Enum):
     USER = "dest"
@@ -376,14 +377,14 @@ def STARFRONT(G: nx.DiGraph, Thd_Latency: dict[str, float]):
 
             # res["paths"]: dict[src] = (dist, [src,...,j])
             for req_r, (dist_rj, path) in res["paths"].items():
-                thd = Thd_Latency.get(G.nodes[req_r][OffPA.REGION.value], float("inf"))
+                thd = Thd_Latency.get(G.nodes[req_r][OffPA.REGION.value], INF)
                 if dist_rj <= thd:
                     candidate[j][req_r] = dist_rj
             
         for j in (sats + clouds):
             size_j[j] = sum(G.nodes[r]["req_size"] for r in candidate[j].keys())
         
-        j_bar_val = float("-inf")
+        j_bar_val = -INF
         j_bar = -1
         new_DG = DG
         for j in (sats + clouds):
@@ -397,7 +398,7 @@ def STARFRONT(G: nx.DiGraph, Thd_Latency: dict[str, float]):
                                         )
             dCT = CT(tmp_DG) - CT(DG)
             if dCT <= 0:
-                curr_j_bar_val = float("-inf")
+                curr_j_bar_val = -INF
             else:
                 curr_j_bar_val = size_j[j] / dCT
                 
@@ -415,3 +416,97 @@ def STARFRONT(G: nx.DiGraph, Thd_Latency: dict[str, float]):
             RQ_remain = new_RQ_remain
         cnt += 1
     return new_DG
+
+def union_graphs(G1: nx.DiGraph, G2: nx.DiGraph) -> nx.DiGraph:
+    """合併兩圖，完整保留並合併屬性；G2 的屬性覆蓋同名鍵。"""
+    G_union = nx.DiGraph()
+
+    # 先拷貝 G1
+    for n, attrs in G1.nodes(data=True):
+        G_union.add_node(n, **attrs)
+    for u, v, attrs in G1.edges(data=True):
+        G_union.add_edge(u, v, **attrs)
+
+    # 合併 G2（屬性覆蓋）
+    for n, attrs in G2.nodes(data=True):
+        if n in G_union:
+            G_union.nodes[n].update(attrs)
+        else:
+            G_union.add_node(n, **attrs)
+
+    for u, v, attrs in G2.edges(data=True):
+        if G_union.has_edge(u, v):
+            G_union[u][v].update(attrs)
+        else:
+            G_union.add_edge(u, v, **attrs)
+
+    return G_union
+
+def PDTA_Density(G: nx.DiGraph, Beta: float, terminals: Set[str]):
+    if G.number_of_edges() == 0:
+        return INF
+    local_terms = set(terminals)
+    D_T = 0
+    total = 0
+    for u, v, d in G.edges(data=True):
+        if v in local_terms:
+            local_terms.remove(v)
+            D_T += 1
+        total += d["cost_traffic"]
+
+    if D_T == 0:
+        return INF
+    else:
+        return (total + Beta * D_T) / D_T
+
+def PDTA(level: int, r: str, m: int, terminals: Set[str], G: nx.DiGraph) -> nx.DiGraph:
+    T_return = nx.DiGraph()
+    T_terminals = set(terminals)
+
+    if m <= 0 or not T_terminals or level < 1:
+        return T_return
+
+    if level == 1:
+        edges_sorted = sorted(
+            [(u, v, d) for u, v, d in G.edges(data=True) if (u == r and v in T_terminals)],
+            key=lambda x: x[2]["cost_traffic"],
+            reverse=False
+        )
+        
+        T_return.add_node(r, **G.nodes[r])
+        for u, v, d in edges_sorted:
+            T_return.add_node(v, **G.nodes[v])
+            T_return.add_edge(u, v, **d)
+        return T_return
+        
+    D_current = set()
+    while len(D_current) < m and T_terminals:
+        T_min = nx.DiGraph()
+        d_T_min = INF
+        tmp: nx.DiGraph
+        D_min = set()
+
+        for v in G.successors(r):
+            for n in range(1, len(T_terminals) + 1):
+                if v in T_terminals:
+                    T_terminals.remove(v)
+                tmp = PDTA(level-1, v, n, T_terminals, G)
+                tmp.add_node(r, **G.nodes[r])
+                tmp.add_node(v, **G.nodes[v])
+                tmp.add_edge(r, v, **G[r][v])
+
+                d_tmp = PDTA_Density(tmp, 1, T_terminals) 
+                if d_tmp < d_T_min:
+                    T_min = tmp
+                    d_T_min = d_tmp
+            if G.nodes[v]["type"] == "dest":
+                T_terminals.add(v)
+
+        D_min = {n for n in T_min.nodes if G.nodes[n].get("type") == "dest"}
+        if not D_min:
+            return T_return
+        D_current |= D_min
+        T_terminals -= D_min
+        T_return = union_graphs(T_return, T_min)
+
+    return T_return
