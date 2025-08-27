@@ -1,6 +1,7 @@
 import os
 import networkx as nx
 from Debug import print_graphs
+from Debug import print_graph
 from Save_And_Read_Graphs import load_graph_sequence_from_txt
 import Algorithm
 
@@ -27,6 +28,18 @@ def main():
     # results = Algorithm.DMTS(time_slots=time_slots, graphs=T)
     # print_graphs(results)
     
-    print_graphs(Algorithm.STARFRONT_sequences(graphs))
+    # print_graphs(Algorithm.STARFRONT_sequences(graphs))
+    src_nodes = [n for n, d in graphs[0].nodes(data=True) if d.get("type") == "src"]
+    dest_nodes = set([n for n, d in graphs[0].nodes(data=True) if d.get("type") == "dest"])
+    satellites_nodes = [n for n, d in graphs[0].nodes(data=True) if d.get("type") == "satellite"]
+    cloud_nodes = [n for n, d in graphs[0].nodes(data=True) if d.get("type") == "cloud"]
+    TIG, CTIG = Algorithm.TIG_CTIG(graphs, src_nodes, satellites_nodes + cloud_nodes)
+    dests_set = {}
+    for idx, si in enumerate(src_nodes):
+        for i in range(time_slots):
+            for j in range(i, time_slots):
+                dests_set[(idx, i, j)] = dest_nodes
+    Algorithm.TSMTA(TIG, CTIG, None, None, src_nodes, dests_set, len(graphs))
+    # print_graph(Algorithm.PDTA(2, src_nodes[0], len(dest_nodes), dest_nodes, graphs[0]))
 if __name__ == "__main__":
     main()
