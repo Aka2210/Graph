@@ -160,11 +160,11 @@ def generate_graph_sequence_random(
     radius_sat=5.0,           # 衛星軌道半徑（視覺化尺度）
     seed=42,
     # 距離門檻（決定要不要加邊）
-    thr_src_to_sat=5.5,       # src -> satellite/cloud
-    thr_sat_to_dest=5.5,      # satellite/cloud -> dest
-    thr_sat_to_sat=3.5,       # satellite <-> satellite（ISL）
-    thr_cloud_to_cloud=4.0,   # cloud <-> cloud（terrestrial）
-    thr_cloud_to_sat=5.0,
+    thr_src_to_sat=1000,       # src -> satellite/cloud
+    thr_sat_to_dest=1000,      # satellite/cloud -> dest
+    thr_sat_to_sat=1000,       # satellite <-> satellite（ISL）
+    thr_cloud_to_cloud=1000,   # cloud <-> cloud（terrestrial）
+    thr_cloud_to_sat=1000,
     p_extra=0.03,             # 額外隨機加邊的機率
     region_dist_thr=4.0
 ):
@@ -326,7 +326,9 @@ def generate_graph_sequence_random(
         for s in srcs:
             for target in sats + clouds:
                 dist_km = euclid_latency(pos[s], pos[target])  # km
+                print(dist_km, target, thr_src_to_sat)
                 if dist_km <= thr_src_to_sat:
+                    print(s, target)
                     bw = _sample_edge_bw(avg_src_bw, rng)
                     latency_ms = realistic_latency(pos[s], pos[target], G.nodes[s]["type"], G.nodes[target]["type"])
                     add_edge_with_cost(G, s, target, latency_ms, bw)
@@ -404,7 +406,7 @@ def main():
     txt_count = len([f for f in os.listdir(dir_path) if f.endswith(".txt")])
 
     # seed 根據檔案數量決定
-    graphs = generate_graph_sequence_random(seed=txt_count + 1, n_total=100, total_time=10)
+    graphs = generate_graph_sequence_random(seed=txt_count + 1, n_total=10, total_time=10)
 
     # print_graphs(graphs)
     
