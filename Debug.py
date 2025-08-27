@@ -1,6 +1,6 @@
 import networkx as nx
 
-def print_graph(G):
+def print_graph(G: nx.DiGraph):
     print("Nodes:")
     for n, attr in G.nodes(data=True):
         print(f"  {n}:")
@@ -12,8 +12,13 @@ def print_graph(G):
         for k, v in attr.items():
             print(f"    {k} = {v}")
 
-def print_graphs(graphs):
-    for t, G in enumerate(graphs):
+def print_graphs(graphs: nx.DiGraph):
+    if isinstance(graphs, nx.DiGraph):
+        graphs = [graphs]
+    elif isinstance(graphs, dict):
+        graphs = graphs.items()
+
+    for t, G in graphs:
         print(f"\n=== Time t = {t} ===")
         print_graph(G)
 
