@@ -1,7 +1,6 @@
 import os
 import networkx as nx
-from Debug import print_graphs
-from Debug import print_graph
+import Debug
 from Save_And_Read_Graphs import load_graph_sequence_from_txt
 import Algorithm
 
@@ -39,7 +38,10 @@ def main():
         for i in range(time_slots):
             for j in range(i, time_slots):
                 dests_set[(idx, i, j)] = dest_nodes
+    # Algorithm.TSMTA(TIG, CTIG, None, None, src_nodes, dests_set, len(graphs))
+    tmp1 , density, records = Algorithm.PDTA(2, src_nodes[0], len(dest_nodes), dest_nodes, graphs[0])
+    tmp2 = Algorithm.PDTA_Origin(2, src_nodes[0], len(dest_nodes), dest_nodes, graphs[0])
+    print(Debug.are_graphs_equal([tmp1], [tmp2]))
     Algorithm.TSMTA(TIG, CTIG, None, None, src_nodes, dests_set, len(graphs))
-    # print_graph(Algorithm.PDTA(2, src_nodes[0], len(dest_nodes), dest_nodes, graphs[0]))
 if __name__ == "__main__":
     main()

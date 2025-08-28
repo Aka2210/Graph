@@ -406,7 +406,7 @@ def main():
     txt_count = len([f for f in os.listdir(dir_path) if f.endswith(".txt")])
 
     # seed 根據檔案數量決定
-    graphs = generate_graph_sequence_random(seed=txt_count + 1, n_total=10, total_time=10)
+    graphs = generate_graph_sequence_random(seed=txt_count + 1, n_total=100, total_time=10)
 
     # print_graphs(graphs)
     
