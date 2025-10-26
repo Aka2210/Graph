@@ -26,22 +26,19 @@ def Setting_Starfront_Thd(G: nx.DiGraph, default_thd: float = 50.0):
     # 暫時統一所有區域的Thd，後續再調整
     return {r: default_thd for r in sorted(rset)}
 
-def STARFRONT_sequences(graphs: List[nx.DiGraph], Thd_Latency: dict[str, float] = None):
+def STARFRONT_sequences(graphs: List[nx.DiGraph], caches: list[str], Thd_Latency: dict[str, float] = None):
     if not Thd_Latency:
         Thd_Latency = Setting_Starfront_Thd(graphs[0])
         
     res: List[nx.DiGraph] = []
     
     for i in range(len(graphs)):
-        res.append(STARFRONT(G=graphs[i], Thd_Latency=Thd_Latency))
+        res.append(STARFRONT(G=graphs[i], Thd_Latency=Thd_Latency, caches=caches))
     return res
     
-def STARFRONT(G: nx.DiGraph, Thd_Latency: dict[str, float]):
+def STARFRONT(G: nx.DiGraph, Thd_Latency: dict[str, float], caches: list[str]):
     RQ_remain = {n for n, d in G.nodes(data=True) if d["type"] == OffPA.USER.value}
-    dests = [n for n, d in G.nodes(data=True) if d["type"] == OffPA.USER.value]
     srcs  = [n for n, d in G.nodes(data=True) if d["type"] == "src"]
-    sats  = [n for n, d in G.nodes(data=True) if d["type"] == "satellite"]
-    clouds= [n for n, d in G.nodes(data=True) if d["type"] == "cloud"]
     DG = nx.DiGraph()
     
     def CT_dist(DG: nx.DiGraph):
@@ -110,7 +107,7 @@ def STARFRONT(G: nx.DiGraph, Thd_Latency: dict[str, float]):
         candidate = defaultdict(dict)   # candidate[j][req] = best_latency(req -> j)
         res_cache = {}                  # 可選：暫存每個 j 的路徑結果，後面 extend DG 會用到
 
-        for j in (sats + clouds):
+        for j in caches:
             # 一次取回所有 req_r→j 的最短路徑與距離
             res = Algorithm.multi_src_to_one_dest_subgraph(
                 G,
@@ -127,13 +124,13 @@ def STARFRONT(G: nx.DiGraph, Thd_Latency: dict[str, float]):
                 if dist_rj <= thd:
                     candidate[j][req_r] = dist_rj
             
-        for j in (sats + clouds):
+        for j in caches:
             size_j[j] = sum(G.nodes[r]["req_size"] for r in candidate[j].keys())
         
         j_bar_val = -INF
         j_bar = -1
         new_DG = DG
-        for j in (sats + clouds):
+        for j in caches:
             tmp_DG = DG.copy()
             extend = Algorithm.multi_src_to_one_dest_subgraph(G, (list(candidate[j].keys()) + srcs), j, OffPA.WEIGHT.value, True)
             tmp_DG = Algorithm.add_nodes_edges_with_attrs(tmp_DG, G, 

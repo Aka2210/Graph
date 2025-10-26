@@ -1,12 +1,5 @@
-from asyncio import Queue
-from collections import defaultdict, deque
-from enum import Enum
-import math
-import random
-import time
 import networkx as nx
-import heapq
-from typing import Any, Dict, List, Set, Tuple
+from typing import Set
 import Debug
 import Algorithm
 
@@ -86,6 +79,10 @@ def PDTA(level: int, r: str, m: int, terminals: Set[str], G: nx.DiGraph):
     d_T_min_return = INF
     T_record = {}
 
+    dist = dict(nx.single_source_shortest_path(G, r, cutoff=level))
+    reachable = set(dist.keys())
+    T_terminals = T_terminals & reachable
+
     if m <= 0 or not T_terminals or level < 1:
         return T_return, d_T_min_return, T_record
 
@@ -104,14 +101,13 @@ def PDTA(level: int, r: str, m: int, terminals: Set[str], G: nx.DiGraph):
         
     D_current = set()
     while len(D_current) < m and T_terminals:
+        # print(len(D_current), m, T_terminals)
         T_min = nx.DiGraph()
         d_T_min = INF
         tmp: nx.DiGraph
         D_min = set()
 
         for v in G.successors(r):
-            if v in T_terminals:
-                T_terminals.remove(v)
             tmp, density, records = PDTA(level-1, v, min(len(T_terminals), m), T_terminals, G)
             tmp.add_node(r, **G.nodes[r])
             tmp.add_node(v, **G.nodes[v])
@@ -142,13 +138,10 @@ def PDTA(level: int, r: str, m: int, terminals: Set[str], G: nx.DiGraph):
                 if d_tmp < d_T_min:
                     T_min = tmp
                     d_T_min = d_tmp
-            if G.nodes[v]["type"] == "dest":
-                T_terminals.add(v)
         D_min = {n for n in T_min.nodes if G.nodes[n].get("type") == "dest"}
-        if not D_min:
-            return T_return, INF, T_record
-        D_current |= D_min
-        T_terminals -= D_min
+        D_min = D_min & T_terminals
+        D_current = D_current | D_min
+        T_terminals = T_terminals - D_min
         T_return = Algorithm.union_graphs(T_return, T_min)
         d_T_min_return = d_T_min
         T_record[(d_T_min, len(D_min))] = T_min

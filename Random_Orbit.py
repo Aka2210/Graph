@@ -92,7 +92,8 @@ def add_edge_with_cost(G, u, v, latency, bandwidth, c_base=0.02, alpha=10, beta=
         latency=latency,
         bandwidth=bandwidth,
         used_bandwidth=0,
-        cost_traffic=cost_traffic
+        cost_traffic=cost_traffic,
+        virtual=False
     )
     
 # 小工具：取得節點在時間 t 的位置（支援「共用軌道參數」）
@@ -119,7 +120,7 @@ def _sample_edge_bw(avg, rng, lower_ratio=0.4, upper_ratio=1.8):
     
     if avg <= 0:
         return 1
-    if rng.random() < 0.5:
+    if rng.random() < 0.2:
         ratio = rng.uniform(lower_ratio, 1.0)   # 小於平均
     else:
         ratio = rng.uniform(1.0, upper_ratio)   # 大於平均
@@ -270,6 +271,7 @@ def generate_graph_sequence_random(
             gamma = 0.0
             req_size = 0.0
             bandwidth = meta.get("bandwidth", 0)
+            cache = False
             
             capacity = round(rng.uniform(100, 500), 2)  # 隨機容量 GB
             storage_used = 0.0
@@ -282,12 +284,14 @@ def generate_graph_sequence_random(
                 d = round(rng.uniform(0.015, 0.03), 5)
                 z_val = 1.0
                 gamma = 1.0
+                cache = rng.choices([True, False], weights=[0.3, 0.7])[0]
 
             elif node_type == "satellite":
                 storage_model = "concave"
                 d = round(rng.uniform(0.02, 0.04), 5)
                 z_val = 0.8
                 gamma = 3.0
+                cache = rng.choices([True, False], weights=[0.3, 0.7])[0]
             
             G.add_node(
                 meta["name"],
@@ -302,11 +306,13 @@ def generate_graph_sequence_random(
                 req_size=req_size,
                 capacity=capacity,        
                 storage_used=storage_used,
-                orbit_id=(meta["orbit"]["orbit_id"] if meta.get("orbit") else None)
+                orbit_id=(meta["orbit"]["orbit_id"] if meta.get("orbit") else None),
+                cache=cache
             )
             
             if node_type == "src":
                 G.nodes[meta["name"]]["data_size"] = rng.randint(15, 25)
+                G.nodes[meta["name"]]["data_size"] = 1
 
         # 分組
         srcs  = [n for n, d in G.nodes(data=True) if d["type"] == "src"]
@@ -326,9 +332,9 @@ def generate_graph_sequence_random(
         for s in srcs:
             for target in sats + clouds:
                 dist_km = euclid_latency(pos[s], pos[target])  # km
-                print(dist_km, target, thr_src_to_sat)
-                if dist_km <= thr_src_to_sat:
-                    print(s, target)
+                # print(dist_km, target, thr_src_to_sat)
+                if rng.random() < 0.8:
+                    # print(s, target)
                     bw = _sample_edge_bw(avg_src_bw, rng)
                     latency_ms = realistic_latency(pos[s], pos[target], G.nodes[s]["type"], G.nodes[target]["type"])
                     add_edge_with_cost(G, s, target, latency_ms, bw)
@@ -337,7 +343,7 @@ def generate_graph_sequence_random(
         for dn in dests:
             for sl in sats + clouds:
                 dist_km = euclid_latency(pos[sl], pos[dn])
-                if dist_km <= thr_sat_to_dest:
+                if rng.random() < 0.8:
                     bw = _sample_edge_bw(avg_src_bw, rng)
                     latency_ms = realistic_latency(pos[sl], pos[dn], G.nodes[sl]["type"], G.nodes[dn]["type"])
                     add_edge_with_cost(G, sl, dn, latency_ms, bw)
@@ -348,7 +354,7 @@ def generate_graph_sequence_random(
             for j in range(i + 1, len(sats)):
                 a, b = sats[i], sats[j]
                 dist_km = euclid_latency(pos[a], pos[b])
-                if dist_km <= thr_sat_to_sat:
+                if rng.random() < 0.8:
                     bw = _sample_edge_bw(avg_src_bw, rng)
                     lat_ab = realistic_latency(pos[a], pos[b], G.nodes[a]["type"], G.nodes[b]["type"])
                     lat_ba = realistic_latency(pos[b], pos[a], G.nodes[b]["type"], G.nodes[a]["type"])
@@ -360,7 +366,7 @@ def generate_graph_sequence_random(
             for j in range(i + 1, len(clouds)):
                 a, b = clouds[i], clouds[j]
                 dist_km = euclid_latency(pos[a], pos[b])
-                if dist_km <= thr_cloud_to_cloud:
+                if rng.random() < 0.8:
                     bw = _sample_edge_bw(avg_src_bw, rng)
                     lat_ab = realistic_latency(pos[a], pos[b], G.nodes[a]["type"], G.nodes[b]["type"])
                     lat_ba = realistic_latency(pos[b], pos[a], G.nodes[b]["type"], G.nodes[a]["type"])
@@ -372,7 +378,7 @@ def generate_graph_sequence_random(
             for j in range(len(sats)):
                 a, b = clouds[i], sats[j]
                 dist_km = euclid_latency(pos[a], pos[b])
-                if dist_km <= thr_cloud_to_sat:
+                if rng.random() < 0.8:
                     bw = _sample_edge_bw(avg_src_bw, rng)
                     lat_ab = realistic_latency(pos[a], pos[b], G.nodes[a]["type"], G.nodes[b]["type"])
                     lat_ba = realistic_latency(pos[b], pos[a], G.nodes[b]["type"], G.nodes[a]["type"])
@@ -380,19 +386,19 @@ def generate_graph_sequence_random(
                     add_edge_with_cost(G, b, a, lat_ba, bw)
         
         # 隨機補邊, 暫時用來解決DMTS出現Unreachable Dest
-        nodes = list(G.nodes)
-        for _ in range(int(p_extra * len(nodes) * (len(nodes) - 1))):
-            u, v = rng.sample(nodes, 2)
+        # nodes = list(G.nodes)
+        # for _ in range(int(p_extra * len(nodes) * (len(nodes) - 1))):
+        #     u, v = rng.sample(nodes, 2)
 
-            # 取得兩端的節點類型
-            u_type = G.nodes[u]["type"]
-            v_type = G.nodes[v]["type"]
+        #     # 取得兩端的節點類型
+        #     u_type = G.nodes[u]["type"]
+        #     v_type = G.nodes[v]["type"]
 
-            # 避開 src->dest 直連，避免自己連自己，避免已存在的邊
-            if u != v and not G.has_edge(u, v) and not (u_type == "src" and v_type == "dest"):
-                bw = _sample_edge_bw(avg_src_bw, rng)
-                lat_ms = realistic_latency(pos[u], pos[v], G.nodes[u]["type"], G.nodes[v]["type"])
-                add_edge_with_cost(G, u, v, lat_ms, bw)
+        #     # 避開 src->dest 直連，避免自己連自己，避免已存在的邊
+        #     if u != v and not G.has_edge(u, v) and not (u_type == "src" and v_type == "dest"):
+        #         bw = _sample_edge_bw(avg_src_bw, rng)
+        #         lat_ms = realistic_latency(pos[u], pos[v], G.nodes[u]["type"], G.nodes[v]["type"])
+        #         add_edge_with_cost(G, u, v, lat_ms, bw)
 
         graph_seq.append(G)
 
@@ -406,7 +412,14 @@ def main():
     txt_count = len([f for f in os.listdir(dir_path) if f.endswith(".txt")])
 
     # seed 根據檔案數量決定
-    graphs = generate_graph_sequence_random(seed=txt_count + 1, n_total=100, total_time=10)
+    graphs = generate_graph_sequence_random(seed=txt_count + 1, 
+                                            thr_src_to_sat=7,
+                                            thr_sat_to_dest=7,
+                                            thr_sat_to_sat=7, 
+                                            thr_cloud_to_cloud=7,
+                                            thr_cloud_to_sat=7,
+                                            n_total=100, 
+                                            total_time=10)
 
     # print_graphs(graphs)
     

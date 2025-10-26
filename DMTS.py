@@ -36,17 +36,20 @@ def LMBBSP_multicast(graph: nx.DiGraph, s: str, destinations: List[str], alpha: 
             break
 
         path_edges = set()
+        last_hops = []
         for dest in destinations:
             cur = dest
             while cur != s and pred[cur]:
                 p = pred[cur][0]
                 path_edges.add((p, cur))
+                if cur == dest:
+                    last_hops.append((p, cur))
                 cur = p
 
         subG = H.edge_subgraph(path_edges).copy()
         results.append(subG)
 
-        H.remove_edges_from(path_edges)
+        H.remove_edges_from(last_hops)
 
     return results
 

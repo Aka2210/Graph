@@ -10,8 +10,14 @@ from typing import Any, Dict, List, Set, Tuple
 import Debug
 
 INF = float("inf")
+
+def are_graphs_equal(G1: nx.DiGraph, G2: nx.DiGraph) -> bool:
+    if not isinstance(G1, nx.Graph) or not isinstance(G2, nx.Graph):
+        raise TypeError(f"Inputs must be networkx Graphs, got {type(G1)} and {type(G2)}")
+
+    return set(G1.nodes()) == set(G2.nodes()) and set(G1.edges()) == set(G2.edges())
     
-def cost_cache(node_attr, size, alpha=1):
+def cost_cache(node_attr: dict, size: float, alpha=1):
     """
     計算單一節點的 storage cost
     node_attr: G.nodes[i] 的 dict
@@ -127,13 +133,12 @@ def union_graphs(G1: nx.DiGraph, G2: nx.DiGraph) -> nx.DiGraph:
         G1 = nx.DiGraph()
     if G2 is None:
         G2 = nx.DiGraph()
-    # 先拷貝 G1
+
     for n, attrs in G1.nodes(data=True):
         G_union.add_node(n, **attrs)
     for u, v, attrs in G1.edges(data=True):
         G_union.add_edge(u, v, **attrs)
 
-    # 合併 G2（屬性覆蓋）
     for n, attrs in G2.nodes(data=True):
         if n in G_union:
             G_union.nodes[n].update(attrs)
@@ -141,9 +146,7 @@ def union_graphs(G1: nx.DiGraph, G2: nx.DiGraph) -> nx.DiGraph:
             G_union.add_node(n, **attrs)
 
     for u, v, attrs in G2.edges(data=True):
-        if G_union.has_edge(u, v):
-            G_union[u][v].update(attrs)
-        else:
+        if not G_union.has_edge(u, v):
             G_union.add_edge(u, v, **attrs)
 
     return G_union
@@ -170,10 +173,39 @@ def check_reachability(CTIG_Interval: Dict[Tuple[int, int, int], nx.DiGraph],
         si = srcs[idx]
 
         # 只算一次最短路徑
-        dist, paths = nx.single_source_dijkstra(G, source=si, weight=None)
+        dist = dict(nx.single_source_shortest_path(G, source=si, cutoff=None))
 
         # 檢查所有 dest 是否可達
         unreachable = [d for d in local_dests if d not in dist]
         if unreachable:
             print(f"[警告] 圖 key={(idx,i,j)}，source={si} 無法到達以下節點: {unreachable}")
             # Debug.print_graph(G)
+            
+def dijkstra_min_edges(G, source, weight="weight"):
+    dist = {source: (0, 0)}  # (cost, hop數)
+    parent = {source: None}
+    pq = [(0, 0, source)]    # (cost, hops, node)
+
+    while pq:
+        cost, hops, u = heapq.heappop(pq)
+        if (cost, hops) > dist[u]:
+            continue
+        for v in G.successors(u):
+            w = G[u][v].get(weight, 1)
+            new_cost = cost + w
+            new_hops = hops + 1
+            if v not in dist or (new_cost, new_hops) < dist[v]:
+                dist[v] = (new_cost, new_hops)
+                parent[v] = u
+                heapq.heappush(pq, (new_cost, new_hops, v))
+
+    # 重建路徑
+    paths = {}
+    for v in dist:
+        path = []
+        cur = v
+        while cur is not None:
+            path.append(cur)
+            cur = parent[cur]
+        paths[v] = list(reversed(path))
+    return dist, paths
