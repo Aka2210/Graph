@@ -66,7 +66,7 @@ def TIG_CTIG(G_sequence: list[nx.DiGraph], srcs: list[str], caches: list[str]):
                 # if not current_edges:
                 #     break
 
-                for (u, v) in current_edges:
+                for (u, v) in sorted(current_edges, key=lambda e: (str(e[0]), str(e[1]))):
                     sum_cost[(u, v)] += float(G_sequence[j][u][v][TVM.WEIGHT.value]) * G_sequence[j].nodes[si]["data_size"]
 
                 G_j = G_sequence[j]
@@ -74,7 +74,7 @@ def TIG_CTIG(G_sequence: list[nx.DiGraph], srcs: list[str], caches: list[str]):
                 # TIG_i_j.add_nodes_from((n, G_j.nodes[n]) for n in G_j.nodes)
                 TIG_i_j.add_nodes_from((n, dict(attrs)) for n, attrs in G_j.nodes(data=True))
 
-                for (u, v) in current_edges:
+                for (u, v) in sorted(current_edges, key=lambda e: (str(e[0]), str(e[1]))):
                     attrs = dict(base_attrs[(u, v)])
                     attrs[TVM.WEIGHT.value] = sum_cost[(u, v)] / (j - i + 1)
                     TIG_i_j.add_edge(u, v, **attrs)
@@ -103,14 +103,14 @@ def TIG_CTIG(G_sequence: list[nx.DiGraph], srcs: list[str], caches: list[str]):
                 TIG_Interval[(idx, i, j)] = TIG_i_j
                 K = nx.DiGraph()
                 K.add_nodes_from((n, dict(attrs)) for n, attrs in TIG_i_j.nodes(data=True))
-                for u in K.nodes:
+                for u in sorted(K.nodes(), key=str):
                     dist, paths = Algorithm.dijkstra_min_edges(
                         TIG_i_j,
                         source=u,
                         weight=TVM.WEIGHT.value
                     )
                     CTIG_Edges_Map[(u, i, j)] = paths
-                    for v, (cost, hops) in dist.items():
+                    for v, (cost, hops) in sorted(dist.items(), key=lambda kv: str(kv[0])):
                         if u == v:
                             continue
                         K.add_edge(u, v, **{TVM.WEIGHT.value: float(cost), "virtual": True})
@@ -384,16 +384,26 @@ def Optimal(T_i_t: dict[tuple[int, int], nx.DiGraph], srcs: list[str], caches: l
         for t1, t2 in intervals[idx]:
             interval_graph = T_i_t[(idx, t1)]
             TIG_t1_t2 = TIG_Interval[(idx, t1, t2)].copy()
-            dists, path = nx.single_source_dijkstra(interval_graph, si, weight=TVM.WEIGHT.value)
+            dists_pack, path = Algorithm.dijkstra_min_edges(interval_graph, si, weight=TVM.WEIGHT.value)
+            dists = {v: cost for v, (cost, _) in dists_pack.items()}
             dest_nodes = set([n for n, d in interval_graph.nodes(data=True) if d.get("type") == "dest"])
             for d in dest_nodes:
                 TIG_t1_t2.remove_edge(path[d][-2], path[d][-1])
-            new_dists, new_path = nx.single_source_dijkstra(TIG_t1_t2, si, weight=TVM.WEIGHT.value)
+            new_dists_pack, new_path = Algorithm.dijkstra_min_edges(TIG_t1_t2, si, weight=TVM.WEIGHT.value)
+            new_dists = {v: cost for v, (cost, _) in new_dists_pack.items()}
 
             for d in dest_nodes:
                 RCL.append((new_dists.get(d, INF) - dists[d], path.get(d, None), new_path.get(d, None), (t1, t2)))
 
-        RCL_sorted = sorted(RCL, key=lambda x: x[0])                                                                                                      
+        RCL_sorted = sorted(
+            RCL,
+            key=lambda x: (
+                round(x[0], 12),                
+                tuple(map(str, x[1] or ())),    
+                tuple(map(str, x[2] or ())),    
+                x[3]  
+            )
+        )                                                                                                
         for i in range(min(candidates_amount, len(RCL_sorted))):
             dist, path, new_path, (t1, t2) = RCL_sorted[i]
             if not new_path:
@@ -401,25 +411,36 @@ def Optimal(T_i_t: dict[tuple[int, int], nx.DiGraph], srcs: list[str], caches: l
             cache = {}
             bc, cc, rc, total = evaluate_algorithm("TSMTA", T_i_t, srcs, caches, total_time, beta=0.1, output=False)
             cache[t1] = T_i_t[(idx, t1)].copy()
-            T_i_t[(idx, t1)].remove_edge(path[-2], path[-1])
+            new_T_i_t = T_i_t[(idx, t1)].copy()
+            new_T_i_t.remove_edge(path[-2], path[-1])
             add_edges = list(zip(new_path[:-1], new_path[1:]))
             for u, v in add_edges:
                 if TIG_Interval[(idx, t1, t1)].has_edge(u, v):
                     edge_attr = TIG_Interval[(idx, t1, t1)][u][v]
-                    T_i_t[(idx, t1)].add_edge(u, v, **edge_attr)
+                    new_T_i_t.add_edge(u, v, **edge_attr)
                 else:
                     raise KeyError(
                         f"❌ Edge ({u}->{v}) not found in TIG_Interval[{idx}, {t1}, {t1}]"
                     )
-            nx.single_source_dijkstra(T_i_t[(idx, t1)], si, weight=TVM.WEIGHT.value)
-            for t in range(t1 + 1, t2 + 1):
-                T_i_t[(idx, t)] = T_i_t[(idx, t1)]
+            new_T_i_t = Algorithm.shortest_path_tree(new_T_i_t, si, weight=TVM.WEIGHT.value)
+            
+            min_val = total
+            l_ch, r_ch = -1, 0
+            for t_l in range(t1, t2 + 1):
+                for t_r in range(t_l, t2 + 1):
+                    T_i_t[(idx, t_r)] = new_T_i_t
+                    bc, cc, rc, val = evaluate_algorithm("TSMTA", T_i_t, srcs, caches, total_time, beta=0.1, output=False)
+                    if val < min_val:
+                        min_val = val
+                        l_ch = t_l
+                        r_ch = t_r
+                for t_r in range(t_l, t2 + 1):
+                    T_i_t[(idx, t_r)] = cache[t1]
 
-            bc, cc, rc, val = evaluate_algorithm("TSMTA", T_i_t, srcs, caches, total_time, beta=0.1, output=False)
             # print(val, i, new_rc, origin_rc)
-            if val > total:
-                for t in range(t1, t2 + 1):
-                    T_i_t[(idx, t)] = cache[t1]
+            if min_val < total:
+                for t in range(l_ch, r_ch + 1):
+                    T_i_t[(idx, t)] = new_T_i_t
 
     # total_time = 5
     # (0, 3) (4, 5) cost = 10, rerouting cost = 5

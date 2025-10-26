@@ -182,30 +182,53 @@ def check_reachability(CTIG_Interval: Dict[Tuple[int, int, int], nx.DiGraph],
             # Debug.print_graph(G)
             
 def dijkstra_min_edges(G, source, weight="weight"):
-    dist = {source: (0, 0)}  # (cost, hop數)
+    from math import isclose
+    EPS = 1e-12
+    dist = {source: (0.0, 0)}
     parent = {source: None}
-    pq = [(0, 0, source)]    # (cost, hops, node)
+    pq = [(0.0, 0, str(source), source)] 
 
     while pq:
-        cost, hops, u = heapq.heappop(pq)
-        if (cost, hops) > dist[u]:
+        cost, hops, _, u = heapq.heappop(pq)
+        if not (isclose(cost, dist[u][0], rel_tol=0.0, abs_tol=EPS) and hops == dist[u][1]):
             continue
-        for v in G.successors(u):
-            w = G[u][v].get(weight, 1)
-            new_cost = cost + w
-            new_hops = hops + 1
-            if v not in dist or (new_cost, new_hops) < dist[v]:
+
+        for v in sorted(G.successors(u), key=str):
+            w = float(G[u][v].get(weight, 1.0))
+            new_cost, new_hops = cost + w, hops + 1
+            name_key_v = str(v)
+
+            if v not in dist:
                 dist[v] = (new_cost, new_hops)
                 parent[v] = u
-                heapq.heappush(pq, (new_cost, new_hops, v))
+                heapq.heappush(pq, (new_cost, new_hops, name_key_v, v))
+            else:
+                old_cost, old_hops = dist[v]
+                better = (new_cost < old_cost - EPS) or \
+                         (isclose(new_cost, old_cost, rel_tol=0.0, abs_tol=EPS) and new_hops < old_hops)
 
-    # 重建路徑
+                tie = isclose(new_cost, old_cost, rel_tol=0.0, abs_tol=EPS) and new_hops == old_hops
+
+                if better or (tie and str(u) < str(parent[v])):
+                    dist[v] = (new_cost, new_hops)
+                    parent[v] = u
+                    heapq.heappush(pq, (new_cost, new_hops, name_key_v, v))
+
     paths = {}
-    for v in dist:
-        path = []
+    for v in sorted(dist.keys(), key=str):
         cur = v
+        path = []
         while cur is not None:
             path.append(cur)
             cur = parent[cur]
         paths[v] = list(reversed(path))
     return dist, paths
+
+def shortest_path_tree(G: nx.DiGraph, src, weight='weight') -> nx.DiGraph:
+    paths = nx.single_source_dijkstra_path(G, src, weight=weight)
+
+    T = nx.DiGraph()
+    for node, path in paths.items():
+        if len(path) > 1:
+            T.add_edge(path[-2], path[-1], **G[path[-2]][path[-1]])
+    return T

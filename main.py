@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import DMTS
 import OffPA
+import random
+import numpy as np
 
 DIR_PATH = "output_graphs"
 time_slots: int
@@ -57,6 +59,10 @@ def Execute_TSMTA(graphs: list[nx.Graph], src_nodes: list[str], caches: list[str
     return T_i_t, TIG, TIG_Edges_Map
     
 def main():
+    random.seed(42)
+    np.random.seed(42)
+    os.environ["PYTHONHASHSEED"] = str(42)
+    
     dir_path = "output_graphs"
     os.makedirs(dir_path, exist_ok=True)
 
