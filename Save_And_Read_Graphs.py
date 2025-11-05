@@ -1,5 +1,6 @@
 import os
 import networkx as nx
+import numpy as np
 
 def save_graph_sequence_to_txt(graph_seq, dir_path="output_graphs"):
     """

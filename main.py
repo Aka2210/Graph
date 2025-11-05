@@ -77,6 +77,17 @@ def main():
     caches = [n for n, d in graphs[0].nodes(data=True) if d.get("cache") == True]
     node_attr_map = {n: dict(d) for n, d in graphs[0].nodes(data=True)}
     time_slots = len(graphs)
+    
+    src = src_nodes[0]
+    reachable_dests = [
+        d for d in dest_nodes
+        if nx.has_path(graphs[0], src, d)  # 保留方向性（DiGraph）
+    ]
+    if len(reachable_dests) < len(dest_nodes):
+        print(f"[警告] 僅 {len(reachable_dests)} / {len(dest_nodes)} 個目的地可從 {src} 抵達。")
+        print(f"不可達目的地: {set(dest_nodes) - set(reachable_dests)}")
+
+    dest_nodes = set(reachable_dests)
     # for G in graphs:
     #     Debug.draw_graph_2d(G, src_nodes[0], 0)
     # DMTS

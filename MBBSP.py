@@ -3,6 +3,7 @@ from collections import defaultdict, deque
 from enum import Enum
 import math
 import random
+import sys
 import time
 import networkx as nx
 import heapq
@@ -41,13 +42,19 @@ def MBBSP_multicast(graph: nx.DiGraph, s: str, destinations: List[str]) -> float
     while remaining:
         bottleneck, prev = single_source_MBBSP(graph, connected)
 
-        best_d = max(remaining, key=lambda d: bottleneck[d])
-        best_bw = bottleneck[best_d]
+        # 先過濾掉 bottleneck 為 0（不可達）的節點
+        reachable_dests = [d for d in remaining if bottleneck[d] > 0]
+        if not reachable_dests:
+            sys.exit("[警告] MBBSP_multicast: 所有剩餘目的地皆不可達，提早結束。")
 
-        if best_bw == 0:
-            raise ValueError("No path found to some destination.")
+        best_d = max(reachable_dests, key=lambda d: bottleneck[d])
+        best_bw = bottleneck[best_d]
 
         remaining.remove(best_d)
         total_min_bottleneck = min(total_min_bottleneck, best_bw)
+
+    # 若完全沒有任何可達目的地
+    if total_min_bottleneck == float('inf'):
+        raise ValueError("No path found to any destination.")
 
     return total_min_bottleneck

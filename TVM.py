@@ -175,7 +175,6 @@ def TSMTA(TIG: dict[tuple[int, int, int], nx.DiGraph], CTIG: dict[tuple[int, int
                     dcount = len(local_dests)
                     G = CTIG_Interval[(idx, i, j)]
                     sig = Algorithm.graph_signature(G)
-                    
                     cache_key = (sig, si, dcount)
                     t0 = time.time()
                     if cache_key in PDTA_cache:
@@ -364,6 +363,7 @@ def evaluate_algorithm(name: str,
     return bc, cc, rc, total
 
 def Optimal(T_i_t: dict[tuple[int, int], nx.DiGraph], srcs: list[str], caches: list[str], TIG_Interval: dict[tuple[int, int, int], nx.DiGraph], total_time: int, candidates_amount: int):
+    print("Start Optimal")
     intervals: dict[int, list[tuple[int, int]]] = {}
     G: nx.DiGraph
 
