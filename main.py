@@ -68,7 +68,7 @@ def main():
 
     # 取得資料夾內的 txt 檔數量
     txt_count = len([f for f in os.listdir(dir_path) if f.endswith(".txt")])
-    graphs = load_graph_sequence_from_txt(path=DIR_PATH, idx=txt_count)
+    graphs = load_graph_sequence_from_txt(path=DIR_PATH, idx=55)
     
     src_nodes = [n for n, d in graphs[0].nodes(data=True) if d.get("type") == "src"]
     dest_nodes = set([n for n, d in graphs[0].nodes(data=True) if d.get("type") == "dest"])

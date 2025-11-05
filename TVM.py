@@ -381,19 +381,48 @@ def Optimal(T_i_t: dict[tuple[int, int], nx.DiGraph], srcs: list[str], caches: l
     dists: dict
     for idx, si in enumerate(srcs):
         RCL: list = []
-        for t1, t2 in intervals[idx]:
-            interval_graph = T_i_t[(idx, t1)]
-            TIG_t1_t2 = TIG_Interval[(idx, t1, t2)].copy()
-            dists_pack, path = Algorithm.dijkstra_min_edges(interval_graph, si, weight=TVM.WEIGHT.value)
-            dists = {v: cost for v, (cost, _) in dists_pack.items()}
-            dest_nodes = set([n for n, d in interval_graph.nodes(data=True) if d.get("type") == "dest"])
-            for d in dest_nodes:
-                TIG_t1_t2.remove_edge(path[d][-2], path[d][-1])
-            new_dists_pack, new_path = Algorithm.dijkstra_min_edges(TIG_t1_t2, si, weight=TVM.WEIGHT.value)
-            new_dists = {v: cost for v, (cost, _) in new_dists_pack.items()}
+        iv_list = intervals[idx]
 
-            for d in dest_nodes:
-                RCL.append((new_dists.get(d, INF) - dists[d], path.get(d, None), new_path.get(d, None), (t1, t2)))
+        for j, (t1, t2) in enumerate(iv_list):
+            interval_graph = T_i_t[(idx, t1)]
+
+            base_pack, base_path = Algorithm.dijkstra_min_edges(interval_graph, si, weight=TVM.WEIGHT.value)
+            base_dists = {v: cost for v, (cost, _) in base_pack.items()}
+
+            dest_nodes = {n for n, d in interval_graph.nodes(data=True) if d.get("type") == "dest"}
+
+            TIG_list = []
+
+            G_cur = TIG_Interval[(idx, t1, t2)].copy()
+            TIG_list.append(G_cur)
+
+            if j > 0:
+                t1_prev = iv_list[j - 1][0]
+                G_prev = TIG_Interval.get((idx, t1_prev, t2))
+                if G_prev is not None:
+                    TIG_list.append(G_prev.copy())
+
+            if j + 1 < len(iv_list):
+                t2_next = iv_list[j + 1][1]
+                G_next = TIG_Interval.get((idx, t1, t2_next))
+                if G_next is not None:
+                    TIG_list.append(G_next.copy())
+
+            for TIG_t1_t2 in TIG_list:
+                for d in dest_nodes:
+                    pd = base_path.get(d)
+                    if pd and len(pd) >= 2:
+                        u, v = pd[-2], pd[-1]
+                        if TIG_t1_t2.has_edge(u, v):
+                            TIG_t1_t2.remove_edge(u, v)
+
+                new_pack, new_path = Algorithm.dijkstra_min_edges(TIG_t1_t2, si, weight=TVM.WEIGHT.value)
+                new_dists = {v: cost for v, (cost, _) in new_pack.items()}
+
+                for d in dest_nodes:
+                    if d in base_dists and d in new_dists:
+                        delta = new_dists[d] - base_dists[d]
+                        RCL.append((delta, base_path.get(d), new_path.get(d), (t1, t2)))
 
         RCL_sorted = sorted(
             RCL,
@@ -412,7 +441,8 @@ def Optimal(T_i_t: dict[tuple[int, int], nx.DiGraph], srcs: list[str], caches: l
             bc, cc, rc, total = evaluate_algorithm("TSMTA", T_i_t, srcs, caches, total_time, beta=0.1, output=False)
             cache[t1] = T_i_t[(idx, t1)].copy()
             new_T_i_t = T_i_t[(idx, t1)].copy()
-            new_T_i_t.remove_edge(path[-2], path[-1])
+            if new_T_i_t.has_edge(path[-2], path[-1]):
+                new_T_i_t.remove_edge(path[-2], path[-1])
             add_edges = list(zip(new_path[:-1], new_path[1:]))
             for u, v in add_edges:
                 if TIG_Interval[(idx, t1, t1)].has_edge(u, v):
