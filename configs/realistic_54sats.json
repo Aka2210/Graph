@@ -1,0 +1,15 @@
+{
+    "seed_offset": 1,
+    "n_sats": 20,
+    "n_clouds": 20,
+    "n_srcs": 1,
+    "n_dests": 10,
+    "total_time": 10,
+    "num_planes": 3,
+    "altitude_km": 550.0,
+    "inclination_deg": 53.0,
+    "f_phasing_param": 1,
+    "base_angular_velocity": 0.06,
+    "thr_cloud_to_cloud": 3000.0,
+    "region_dist_thr": 1000.0
+}

@@ -1,6 +1,7 @@
 import os
 import networkx as nx
 import numpy as np
+import pandas as pd
 
 def save_graph_sequence_to_txt(graph_seq, dir_path="output_graphs"):
     """
@@ -91,3 +92,24 @@ def load_graph_sequence_from_txt(path: str, idx: int | None = None) -> list[nx.D
         graphs.append(G)
 
     return graphs
+
+def save_result_to_excel(excel_path: str, result_row: dict):
+    if not os.path.exists(excel_path):
+        df = pd.DataFrame([result_row])
+        df.to_excel(excel_path, index=False)
+        print(f"[Excel] created: {excel_path}")
+        return
+    
+    df = pd.read_excel(excel_path)
+
+    if "experiment_id" in df.columns:
+        last_id = df["experiment_id"].max()
+        last_id = 0 if pd.isna(last_id) else last_id
+    else:
+        last_id = 0
+
+    result_row["experiment_id"] = last_id + 1
+
+    df = pd.concat([df, pd.DataFrame([result_row])], ignore_index=True)
+    df.to_excel(excel_path, index=False)
+    print(f"[Excel] appended row (id={last_id+1}) → {excel_path}")

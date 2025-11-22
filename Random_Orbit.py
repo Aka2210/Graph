@@ -1,7 +1,9 @@
 import argparse
+import json
 import math
 import os
 import random
+import sys
 import numpy as np
 import networkx as nx
 from Save_And_Read_Graphs import save_graph_sequence_to_txt
@@ -20,6 +22,62 @@ EARTH_RADIUS_KM = 6371.0
 MIN_ELEVATION_ANGLE = 15.0 
 
 # --- 真實模型所需的新增輔助函數 ---
+
+def force_connect_ground(G, ground, sats):
+    """
+    ground = src/dest/cloud
+    sats   = 所有衛星
+    強制 ground 連接到附近 2 顆 satellite（雙向）
+    """
+    if not sats:
+        return
+
+    # 挑最近兩顆
+    sats_sorted = sorted(
+        sats,
+        key=lambda s: euclid_latency(G.nodes[ground]["pos"], G.nodes[s]["pos"])
+    )[:2]
+
+    for s in sats_sorted:
+        # latency=1, bandwidth=1000 → 不破壞演算法
+        add_edge_with_cost(G, ground, s, latency=1, bandwidth=1000)
+        add_edge_with_cost(G, s, ground, latency=1, bandwidth=1000)
+
+def ensure_strongly_connected(G):
+    """
+    修補成 strongly connected（強連通）
+    OffPA 必須要求所有節點間 directed reachable
+    """
+    UG = G.to_undirected()
+    comps = list(nx.connected_components(UG))
+
+    if len(comps) <= 1:
+        return
+
+    comps = [list(c) for c in comps]
+
+    for i in range(len(comps) - 1):
+        A = comps[i]
+        B = comps[i + 1]
+
+        best_dist = float("inf")
+        best_pair = None
+
+        # 找跨 component 最近的兩點
+        for u in A:
+            for v in B:
+                d = euclid_latency(G.nodes[u]["pos"], G.nodes[v]["pos"])
+                if d < best_dist:
+                    best_dist = d
+                    best_pair = (u, v)
+
+        u, v = best_pair
+
+        # φ 加雙向邊
+        add_edge_with_cost(G, u, v, latency=1, bandwidth=1000)
+        add_edge_with_cost(G, v, u, latency=1, bandwidth=1000)
+
+        print(f"[ensureSCC] Patch {u} ↔ {v}, dist={best_dist:.2f}")
 
 def get_elevation_angle(p_ground, p_sat):
     """
@@ -167,7 +225,6 @@ def realistic_latency(p1, p2, u_type, v_type):
     return prop_delay + proc_delay
 
 def get_cost_traffic(u_type, v_type, c_base=0.02, alpha=10, beta=6):
-    # (此函數原封不動)
     # Region/User 與 Cloud（地面）
     if (u_type in ("src", "dest") and v_type == "cloud") or \
        (v_type in ("src", "dest") and u_type == "cloud"):
@@ -190,7 +247,6 @@ def get_cost_traffic(u_type, v_type, c_base=0.02, alpha=10, beta=6):
     return c_base
 
 def add_edge_with_cost(G, u, v, latency, bandwidth, c_base=0.02, alpha=10, beta=6):
-    # (此函數原封不動)
     u_type = G.nodes[u]["type"]
     v_type = G.nodes[v]["type"]
     cost_traffic = get_cost_traffic(u_type, v_type, c_base, alpha, beta)
@@ -202,8 +258,6 @@ def add_edge_with_cost(G, u, v, latency, bandwidth, c_base=0.02, alpha=10, beta=
         cost_traffic=cost_traffic,
         virtual=False
     )
-    
-# --- 座標計算函數 (已替換為真實軌道模型) ---
 
 def get_pos(meta, t):
     """
@@ -241,9 +295,9 @@ def get_pos(meta, t):
     
     raise ValueError(f"Invalid mobile node without orbit info: {meta}")
 
-# --- 保留的輔助函數 ---
-
 def _sample_edge_bw(avg, rng, lower_ratio=0.4, upper_ratio=1.8, min_bw=10):
+    # 為了符合DMST論文中的實驗環境
+    return 1000
     """
     回傳一個整數的 edge bandwidth。
     在 [lower_ratio*avg, upper_ratio*avg] 區間內隨機抽樣，並保證至少 min_bw。
@@ -258,7 +312,6 @@ def _sample_edge_bw(avg, rng, lower_ratio=0.4, upper_ratio=1.8, min_bw=10):
     return max(min_bw, int(avg * ratio))
 
 def _assign_regions_to_dests(G, dests, pos, thr):
-    # (此函數原封不動，但傳入的 thr 意義變為 km)
     H = nx.Graph()
     H.add_nodes_from(dests)
     for i in range(len(dests)):
@@ -278,25 +331,19 @@ def _assign_regions_to_dests(G, dests, pos, thr):
         for n in members:
             G.nodes[n]["region"] = rid
     G.graph["regions"] = regions
-    
-# --- 核心函數：生成圖形序列 (已大幅修改) ---
 
 def generate_graph_sequence_realistic(
-    # 節點數量
     n_sats=60,
     n_clouds=10,
     n_srcs=5,
     n_dests=25,
-    # 時間
     total_time=10,
     seed=42,
-    # Walker 星座參數
     num_planes=6,           
     altitude_km=550.0,
     inclination_deg=53.0,
     f_phasing_param=0,
     base_angular_velocity=0.05,
-    # 地面連線參數
     thr_cloud_to_cloud=2000.0,
     region_dist_thr=1000.0
 ):
@@ -318,7 +365,6 @@ def generate_graph_sequence_realistic(
     rng = random.Random(seed)
     np.random.seed(seed)
         
-    # === 建立節點元資料 ===
     nodes_meta = []
     
     if n_sats > 0:
@@ -363,7 +409,6 @@ def generate_graph_sequence_realistic(
             )
         nodes_meta.append(meta)
 
-    # === 生成每個時間步 ===
     graph_seq = []
     for t in range(total_time):
         G = nx.DiGraph(time=t)
@@ -424,7 +469,6 @@ def generate_graph_sequence_realistic(
         avg_src_bw = (sum(src_bws) / len(src_bws)) if src_bws else 10
         _assign_regions_to_dests(G, dests, pos, region_dist_thr)
 
-        # === 地對空連線 ===
         ground_stations = srcs + dests + clouds
         for gnd_node in ground_stations:
             for sat_node in sats:
@@ -435,7 +479,6 @@ def generate_graph_sequence_realistic(
                     lat_sg = realistic_latency(pos[sat_node], pos[gnd_node], G.nodes[sat_node]["type"], G.nodes[gnd_node]["type"])
                     add_edge_with_cost(G, sat_node, gnd_node, lat_sg, bw)
 
-        # === 衛星 ↔ 衛星 (ISL) ===
         sats_by_plane = {}
         for s in sats:
             orb_id = G.nodes[s]["orbit_id"]
@@ -467,7 +510,6 @@ def generate_graph_sequence_realistic(
                             add_edge_with_cost(G, sat_a, sat_b_inter, lat_ab, bw)
                             add_edge_with_cost(G, sat_b_inter, sat_a, lat_ba, bw)
 
-        # === Cloud ↔ Cloud ===
         for i in range(len(clouds)):
             for j in range(i + 1, len(clouds)):
                 a, b = clouds[i], clouds[j]
@@ -479,7 +521,6 @@ def generate_graph_sequence_realistic(
                     add_edge_with_cost(G, a, b, lat_ab, bw)
                     add_edge_with_cost(G, b, a, lat_ba, bw)
 
-        # === Src ↔ Cloud ===
         for s in srcs:
             for c in clouds:
                 dist_km = euclid_latency(pos[s], pos[c])
@@ -493,36 +534,25 @@ def generate_graph_sequence_realistic(
         backbone_nodes = sats + clouds
         
         if not backbone_nodes and (len(srcs) > 0 or len(dests) > 0):
-            # 這種情況下，沒有骨幹，src/dest 永遠無法連線
             print(f"[t={t}] 警告: 圖中沒有任何 backbone 節點 (sats/clouds)。")
         
-        elif backbone_nodes: # 只有在有骨幹節點時才執行
+        elif backbone_nodes: 
             
-            # --- 1. 強制 Src 連線 ---
             for s in srcs:
-                # 檢查 Src 是否有任何對外的邊
                 if G.out_degree(s) == 0:
-                    # 找出最近的骨幹節點 (無論是 sat 還是 cloud)
                     closest_bb_node = min(backbone_nodes, key=lambda n: euclid_latency(pos[s], pos[n]))
                     bb_type = G.nodes[closest_bb_node]['type']
                     
-                    # print(f"[t={t}] 警告: Src {s} 是孤島。強制連線到最近的 {bb_type} 節點 {closest_bb_node}。")
-                    
-                    # (使用一個合理的頻寬)
                     bw = _sample_edge_bw(avg_src_bw * 5, rng, 0.8, 1.2)
                     
                     lat_s_bb = realistic_latency(pos[s], pos[closest_bb_node], "src", bb_type)
                     lat_bb_s = realistic_latency(pos[closest_bb_node], pos[s], bb_type, "src")
                     
-                    # 建立雙向生命線
                     add_edge_with_cost(G, s, closest_bb_node, lat_s_bb, bw)
                     add_edge_with_cost(G, closest_bb_node, s, lat_bb_s, bw)
 
-            # --- 2. 強制 Dest 連線 ---
             for d in dests:
-                # 檢查 Dest 是否已連到任何骨幹節點
                 is_connected = False
-                # 必須檢查雙向
                 for neighbor in G.successors(d):
                     if neighbor in backbone_nodes:
                         is_connected = True
@@ -535,51 +565,57 @@ def generate_graph_sequence_realistic(
                         break
                 if is_connected: continue
 
-                # 如果 Dest 還是孤島
-                # 找出最近的骨幹節點
                 closest_bb_node = min(backbone_nodes, key=lambda n: euclid_latency(pos[d], pos[n]))
                 bb_type = G.nodes[closest_bb_node]['type']
-                
-                # print(f"[t={t}] 警告: Dest {d} 是孤島。強制連線到最近的 {bb_type} 節點 {closest_bb_node}。")
 
                 bw = _sample_edge_bw(avg_src_bw * 5, rng, 0.8, 1.2)
                 
                 lat_d_bb = realistic_latency(pos[d], pos[closest_bb_node], "dest", bb_type)
                 lat_bb_d = realistic_latency(pos[closest_bb_node], pos[d], bb_type, "dest")
                 
-                # 建立雙向生命線
                 add_edge_with_cost(G, d, closest_bb_node, lat_d_bb, bw)
                 add_edge_with_cost(G, closest_bb_node, d, lat_bb_d, bw)
-
+                
+        for g in srcs + dests + clouds:
+            force_connect_ground(G, g, sats)
+        ensure_strongly_connected(G)
         graph_seq.append(G)
         
     return graph_seq
         
 def main():
+    if len(sys.argv) < 2:
+        print("使用方法: python main.py <config.json> [excel_name.xlsx]")
+        sys.exit(1)
+
+    config_path = sys.argv[1]
+
+    with open(config_path, "r") as f:
+        cfg = json.load(f)
+
+    if len(sys.argv) >= 3:
+        excel_path = sys.argv[2]
+    else:
+        excel_path = f"results_ns{cfg['n_sats']}_nc{cfg['n_clouds']}_nd{cfg['n_dests']}_p{cfg['num_planes']}_t{cfg['total_time']}.xlsx"
+
     dir_path = "output_graphs"
     os.makedirs(dir_path, exist_ok=True)
-    # 取得資料夾內的 txt 檔數量
     txt_count = len([f for f in os.listdir(dir_path) if f.endswith(".txt")])
     
-    # 使用新的函數和參數
     graphs = generate_graph_sequence_realistic(
-        seed=txt_count + 1,
-        # 節點數量
-        n_sats=100,         # Starlink 早期階段
-        n_clouds=30,
-        n_srcs=1,
-        n_dests=100,
-        # 時間
-        total_time=10,
-        # Walker 星座參數
-        num_planes=6,      # 6 個軌道平面
-        altitude_km=550.0, # 550 km 高度
-        inclination_deg=53.0, # 53 度傾角
-        f_phasing_param=1, # 簡易相位參數
-        base_angular_velocity=0.06, # 角速度
-        # 地面連線參數
-        thr_cloud_to_cloud=3000.0, # 地面連線門檻 (km)
-        region_dist_thr=1000.0    # 聚類門檻 (km)
+        seed=txt_count + cfg["seed_offset"],
+        n_sats=cfg["n_sats"],
+        n_clouds=cfg["n_clouds"],
+        n_srcs=cfg["n_srcs"],
+        n_dests=cfg["n_dests"],
+        total_time=cfg["total_time"],
+        num_planes=cfg["num_planes"],
+        altitude_km=cfg["altitude_km"],
+        inclination_deg=cfg["inclination_deg"],
+        f_phasing_param=cfg["f_phasing_param"],
+        base_angular_velocity=cfg["base_angular_velocity"],
+        thr_cloud_to_cloud=cfg["thr_cloud_to_cloud"],
+        region_dist_thr=cfg["region_dist_thr"]
     )
     
     # --- 以下替換為簡單的日誌輸出 ---
@@ -600,21 +636,19 @@ def main():
         print(f"  - 源站 (Sources): {n_srcs}")
         print(f"  - 目的地 (Destinations): {n_dests}")
         
-        # 檢查 ISL 連線
         isl_edges = len([
             (u, v) for u, v, d in G0.edges(data=True) 
             if G0.nodes[u]['type'] == 'satellite' and G0.nodes[v]['type'] == 'satellite'
         ])
         print(f"衛星間連線 (ISL) 總數: {isl_edges}")
 
-        # 檢查地對空連線
         gts_edges = len([
             (u, v) for u, v, d in G0.edges(data=True) 
             if G0.nodes[u]['type'] != 'satellite' and G0.nodes[v]['type'] == 'satellite'
         ])
         print(f"地對空連線 (Gnd-to-Sat) 總數: {gts_edges}")
+        print(nx.is_strongly_connected(G0), nx.is_connected(G0.to_undirected()))
 
-    # (註解掉原有的保存和讀取)
     save_graph_sequence_to_txt(graph_seq=graphs)
     loaded_graph_seq = load_graph_sequence_from_txt(path="output_graphs", idx=txt_count + 1)
     print(are_graphs_equal(graphs, loaded_graph_seq))

@@ -77,6 +77,8 @@ def TIG_CTIG(G_sequence: list[nx.DiGraph], srcs: list[str], caches: list[str]):
                 for (u, v) in sorted(current_edges, key=lambda e: (str(e[0]), str(e[1]))):
                     attrs = dict(base_attrs[(u, v)])
                     attrs[TVM.WEIGHT.value] = sum_cost[(u, v)] / (j - i + 1)
+                    attrs["BC"] = sum_cost[(u, v)] / (j - i + 1)
+                    attrs["CC"] = 0
                     TIG_i_j.add_edge(u, v, **attrs)
                 
                 map = {v: Algorithm.reconstruct_path(parents[j], v) for v in parents[j]}
@@ -93,7 +95,7 @@ def TIG_CTIG(G_sequence: list[nx.DiGraph], srcs: list[str], caches: list[str]):
                     )
 
                     total_val = (sum_cache_cost[(si, c)] + sum_storage_cost[(si, c)]) / (j - i + 1)
-                    TIG_i_j.add_edge(si, c, **{TVM.WEIGHT.value: total_val, "virtual": True})
+                    TIG_i_j.add_edge(si, c, **{TVM.WEIGHT.value: total_val, "virtual": True, "BC": sum_storage_cost[(si, c)], "CC": sum_cache_cost[(si, c)]})
                  
                     if (idx, j) not in TIG_Edges_Map:
                         TIG_Edges_Map[(idx, j)] = {}
@@ -113,7 +115,25 @@ def TIG_CTIG(G_sequence: list[nx.DiGraph], srcs: list[str], caches: list[str]):
                     for v, (cost, hops) in sorted(dist.items(), key=lambda kv: str(kv[0])):
                         if u == v:
                             continue
-                        K.add_edge(u, v, **{TVM.WEIGHT.value: float(cost), "virtual": True})
+                        
+                        path = paths.get(v, None)
+                        if not path or len(path) < 2:
+                            continue
+
+                        bc_sum = 0.0
+                        cc_sum = 0.0
+
+                        for a, b in zip(path[:-1], path[1:]):
+                            edge_attr = TIG_i_j[a][b]
+                            bc_sum += edge_attr.get("BC", 0.0)
+                            cc_sum += edge_attr.get("CC", 0.0)
+                        
+                        K.add_edge(u, v, **{TVM.WEIGHT.value: float(cost),
+                                            "BC": bc_sum,
+                                            "CC": cc_sum,
+                                            "virtual": True,
+                                        }
+                            )
                 CTIG_Interval[(idx, i, j)] = K
                 
     return TIG_Interval, CTIG_Interval, TIG_Edges_Map, CTIG_Edges_Map
@@ -168,9 +188,11 @@ def TSMTA(TIG: dict[tuple[int, int, int], nx.DiGraph], CTIG: dict[tuple[int, int
         T_Density_min = INF
         
         for idx, si in enumerate(srcs):
+            test_time = time.time()
             for i in range(total_time):
                 local_dests = dests.get((idx, i, i), set())
-                for j in range(i, total_time):
+                # 1改為total_time能讓執行時間大幅下降, 且總cost上升幅度可接受
+                for j in range(i, total_time, 1):
                     local_dests = (local_dests & dests.get((idx, j, j), set()))
                     dcount = len(local_dests)
                     G = CTIG_Interval[(idx, i, j)]
@@ -221,7 +243,6 @@ def TSMTA(TIG: dict[tuple[int, int, int], nx.DiGraph], CTIG: dict[tuple[int, int
                             
                             if tmp_min < T_Density_min:
                                 T_Density_min, T_best, i_best, t1_best, t2_best = tmp_min, tmp_k.copy(), idx, i, j
-                    
         remove = [n for n, d in T_best.nodes(data=True) if d["type"] == TVM.USER.value]
         if len(remove) == 0:
             break 
@@ -351,15 +372,14 @@ def evaluate_algorithm(name: str,
                 if G is None:
                     continue
                 for u, v, attrs in G.edges(data=True):
+                    bc += attrs.get("BC", 0.0)
+                    cc += attrs.get("CC", 0.0)
                     TSMTA += attrs.get("cost_traffic", 0.0)
     rc = RC(T_i_t, src_nodes, total_time, beta)
-    total = bc + cc + rc + TSMTA
+    total = bc + cc + rc
 
     if output:
-        if name != "TSMTA":
-            print(f"[{name}] BC={bc:.2f}, CC={cc:.2f}, RC={rc:.2f}, Total={total:.2f}")
-        else:
-            print(f"[{name}] BC+CC={TSMTA:.2f}, RC={rc:.2f}, Total={total:.2f}")
+        print(f"[{name}] BC={bc:.2f}, CC={cc:.2f}, RC={rc:.2f}, Total={total:.2f}")
     return bc, cc, rc, total
 
 def Optimal(T_i_t: dict[tuple[int, int], nx.DiGraph], srcs: list[str], caches: list[str], TIG_Interval: dict[tuple[int, int, int], nx.DiGraph], total_time: int, candidates_amount: int):
