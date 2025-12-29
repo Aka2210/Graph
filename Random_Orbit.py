@@ -113,6 +113,11 @@ def get_elevation_angle(p_ground, p_sat):
 def is_earth_blocking(p1, p2, earth_radius=EARTH_RADIUS_KM):
     """
     檢查 p1 和 p2 之間的直線路徑是否被地球遮擋
+    Section 3.1 Accurate Emulation of LEO Constellations
+    “ISL connectivity depends on the line of sight between two 
+    adjacent satellites, e.g., if a possible laser link drops 
+    below a certain altitude, the Earth’s atmosphere may refract 
+    that laser, causing an intermittent loss of connectivity.”
     """
     p1 = np.array(p1)
     p2 = np.array(p2)
@@ -151,12 +156,13 @@ def generate_walker_meta(
 ):
     """
     生成 Walker 星座的元數據 (meta)
+    修改版：支援衛星總數無法被平面數整除的情況，將自動平均分配。
     """
     
-    if num_sats_total % num_planes != 0:
-        raise ValueError("衛星總數必須能被軌道平面數整除")
-        
-    sats_per_plane = num_sats_total // num_planes
+    # 計算基礎數量與餘數
+    base_sats_per_plane = num_sats_total // num_planes
+    remainder = num_sats_total % num_planes
+    
     radius_km = EARTH_RADIUS_KM + altitude_km
     inclination_rad = math.radians(inclination_deg)
     
@@ -166,11 +172,20 @@ def generate_walker_meta(
         # 1. 計算軌道平面的經度 (RAAN)
         raan_rad = math.radians(p_idx * (360.0 / num_planes))
         
-        for k_idx in range(sats_per_plane):
+        # 決定這個平面有幾顆衛星
+        # 如果 p_idx 小於餘數，就多分配一顆 (均勻分散餘數)
+        if p_idx < remainder:
+            current_plane_sats_count = base_sats_per_plane + 1
+        else:
+            current_plane_sats_count = base_sats_per_plane
+
+        for k_idx in range(current_plane_sats_count):
             # 2. 計算衛星在軌道內的初始相位 (Phase)
-            phase_in_plane = math.radians(k_idx * (360.0 / sats_per_plane))
+            # 注意：這裡的分母要用該平面「實際」的衛星數，確保在該平面內均勻分佈
+            phase_in_plane = math.radians(k_idx * (360.0 / current_plane_sats_count))
             
             # 3. 應用 F 參數進行平面間相位偏移
+            # Walker 星座定義通常基於 Total Satellites，這裡維持原邏輯
             phase_offset = math.radians(f_phasing_param * (p_idx * 360.0 / num_sats_total))
             
             phi0 = phase_in_plane + phase_offset
@@ -182,10 +197,10 @@ def generate_walker_meta(
                 orbit=dict(
                     r=radius_km, 
                     inc=inclination_rad, 
-                    raan=raan_rad,          # 軌道平面的經度
+                    raan=raan_rad,           # 軌道平面的經度
                     w=base_angular_velocity, # 軌道角速度
-                    orbit_id=p_idx,       # 軌道平面 ID
-                    id_in_plane=k_idx     # 在軌道內的 ID
+                    orbit_id=p_idx,          # 軌道平面 ID
+                    id_in_plane=k_idx        # 在軌道內的 ID
                 ),
                 phi0=phi0,
             )
@@ -199,30 +214,45 @@ def euclid_latency(p1, p2):
     # 此函數現在計算的是 3D 地心座標系中的直線距離 (km)
     return float(math.dist(p1, p2))
 
-def realistic_latency(p1, p2, u_type, v_type):
+def realistic_latency(p1, p2, u_type, v_type, bin_size_ms=5.0):
     """
-    計算合理的鏈路延遲 (ms)
-    - p1, p2: 節點座標 (x,y,z)，單位假設為 km
-    - u_type, v_type: 節點類型 (src, dest, satellite, cloud)
+    修改版：加入 bin_size_ms 參數進行「階梯化」。
+    bin_size_ms: 設為 0 代表連續變化（原本模式）。
+                 設為 5.0 代表延遲會被 rounded 到最近的 5ms 倍數 (5, 10, 15...)
+                 這樣可以讓 Cost 在一段時間內保持恆定。
     """
     # 距離 (km -> m)
     distance_km = float(math.dist(p1, p2))
     d = distance_km * 1000.0
+    
     # 傳播速度
     if u_type == "cloud" and v_type == "cloud":
-        speed = 2e8  # 光纖，大約 2/3 c
+        speed = 2e8  # 光纖
     else:
-        speed = 3e8  # 空間鏈路，接近真空光速
+        speed = 3e8  # 空間鏈路
+        
     # 傳播延遲 (ms)
     prop_delay = d / speed * 1000.0
+    
     # 處理延遲 (ms)
     if u_type == "satellite" and v_type == "satellite":
-        proc_delay = 1.0    # ISL 轉發延遲
+        proc_delay = 1.0
     elif "cloud" in (u_type, v_type):
-        proc_delay = 0.5    # 地面節點處理
+        proc_delay = 0.5
     else:
-        proc_delay = 0.2    # 其他連線 (src/dest)
-    return prop_delay + proc_delay
+        proc_delay = 0.2
+        
+    total_latency = prop_delay + proc_delay
+
+    # --- 關鍵修改：階梯化 (Quantization) ---
+    if bin_size_ms > 0:
+        # 例如: 12.3ms -> round(12.3/5)*5 = 2*5 = 10ms
+        # 例如: 13.8ms -> round(13.8/5)*5 = 3*5 = 15ms
+        total_latency = round(total_latency / bin_size_ms) * bin_size_ms
+        # 確保至少有一個基本延遲，避免變成 0
+        total_latency = max(total_latency, bin_size_ms)
+
+    return total_latency
 
 def get_cost_traffic(u_type, v_type, c_base=0.02, alpha=10, beta=6):
     # Region/User 與 Cloud（地面）
@@ -355,12 +385,6 @@ def generate_graph_sequence_realistic(
     - 地對空連線：基於最小仰角
     - 空對空連線 (ISL)：基於結構化鄰居與地球遮擋
     """
-    
-    if n_sats % num_planes != 0:
-        print(f"警告: 衛星數 {n_sats} 無法被平面數 {num_planes} 整除。")
-        sats_per_plane = math.ceil(n_sats / num_planes)
-        n_sats = sats_per_plane * num_planes
-        print(f"修正後衛星總數為: {n_sats}")
 
     rng = random.Random(seed)
     np.random.seed(seed)
@@ -469,6 +493,9 @@ def generate_graph_sequence_realistic(
         avg_src_bw = (sum(src_bws) / len(src_bws)) if src_bws else 10
         _assign_regions_to_dests(G, dests, pos, region_dist_thr)
 
+        # Section 3.1 Accurate Emulation of LEO Constellations
+        # “ground stations can only communicate with satellites that are above a configurable minimum elevation above the horizon.”
+        # “Celestial then uses satellite and ground station positions to calculate ground station uplinks and the satellite network topology.”
         ground_stations = srcs + dests + clouds
         for gnd_node in ground_stations:
             for sat_node in sats:
@@ -479,6 +506,7 @@ def generate_graph_sequence_realistic(
                     lat_sg = realistic_latency(pos[sat_node], pos[gnd_node], G.nodes[sat_node]["type"], G.nodes[gnd_node]["type"])
                     add_edge_with_cost(G, sat_node, gnd_node, lat_sg, bw)
 
+        # Starlink +GRID pattern。
         sats_by_plane = {}
         for s in sats:
             orb_id = G.nodes[s]["orbit_id"]
@@ -537,7 +565,9 @@ def generate_graph_sequence_realistic(
             print(f"[t={t}] 警告: 圖中沒有任何 backbone 節點 (sats/clouds)。")
         
         elif backbone_nodes: 
-            
+            # For algorithmic convenience, we ensure that the time-varying directed graph 
+            # remains strongly connected by connecting isolated ground nodes to their nearest 
+            # satellite or cloud node and by adding auxiliary links between disconnected components.
             for s in srcs:
                 if G.out_degree(s) == 0:
                     closest_bb_node = min(backbone_nodes, key=lambda n: euclid_latency(pos[s], pos[n]))

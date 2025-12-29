@@ -1,15 +1,120 @@
 {
+    "start_sats": 50,
     "seed_offset": 1,
-    "n_sats": 20,
+    "n_sats": 1,
     "n_clouds": 20,
     "n_srcs": 1,
-    "n_dests": 10,
+    "n_dests": 100,
     "total_time": 10,
-    "num_planes": 3,
+    "num_planes": 72,
     "altitude_km": 550.0,
     "inclination_deg": 53.0,
     "f_phasing_param": 1,
-    "base_angular_velocity": 0.06,
-    "thr_cloud_to_cloud": 3000.0,
-    "region_dist_thr": 1000.0
+    "base_angular_velocity": 0.00105,
+    "thr_cloud_to_cloud": 3200.0,
+    "region_dist_thr": 1000.0,
+
+    "_comment": 
+    [
+        [
+            "【相位參數 (Phasing Parameter) 來源：StarPerf】",
+            "為什麼將 Phase Shift 設為 1？",
+            "雖然 Starlink 的 FCC 文件是寫 5，但在學術模擬領域，頂會論文 **StarPerf (ICNP 2020)** 在建立 Starlink 模擬基準時，明確將 'Phase shift' 設定為 **1**。為了確保本研究的模擬環境與這些公開發表的學術 Benchmark 保持一致（Reproducibility），我們採用了 StarPerf 的參數設定。",
+            "--- 詳細引用 ---",
+            "參數設定：f_phasing_param = 1。",
+            "1. StarPerf (ICNP 2020):",
+            "   - 位置：Section IV.A, Table II 'Primary constellation parameters...', Page 6。",
+            "   - 原文佐證：Table II 第一欄 'Starlink (Phase 1)' 對應的 'Phase shift' 欄位明確標示數值為 **'1'**。"
+        ],
+        [
+            "【星座結構參數來源：STARFRONT, SaTCP, StarPerf】",
+            "為什麼選 1584 顆衛星、550km 高度？",
+            "因為這是 Starlink 第一階段（Shell 1）的標準規格。ToN、INFOCOM 和 ICNP 這些頂級會議的論文都用這組參數當作「標準題目」。",
+            "--- 詳細引用 ---",
+            "參數設定：n_sats=1584, planes=72, altitude=550km, inclination=53°。",
+            "1. STARFRONT (ToN 2023):",
+            "   - 位置：Section VI.A 'Simulated Satellite-Cloud Integrated Network', Page 11 (Doc p.2569)。",
+            "   - 原文佐證：'In particular, we evaluate STARFRONT under the configuration of: (i) the first shell of Starlink Phase-I, which has deployed 1584 LEO satellites in 72 orbital planes with an altitude of about 550km'.",
+            "   - 補充：Table II 亦列出 'Inclination 53°, Altitude 550km'。",
+            "2. SaTCP (INFOCOM 2023):",
+            "   - 位置：Section III.C 'Starlink Shell 1 Properties', Page 3。",
+            "   - 原文佐證：'The shell consists of 72 orbits, each containing 22 satellites [27], with altitude of 550km and an orbital period of only 1.59 hours.'",
+            "3. StarPerf (ICNP 2020):",
+            "   - 位置：Section IV.A 'Benchmarking constellation systems...', Table II, Page 6。",
+            "   - 原文佐證：Table II 列示 Starlink (Phase 1) 參數為 'Inclination 53°, Altitude 550km, # of orbit 24, # of satellites 66 (Total 1584)'。"
+        ],
+        [
+            "【角速度與動態性來源：STARFRONT, SaTCP, SaTE】",
+            "為什麼角速度是 0.00105？",
+            "根據物理定律算出來的。論文提供了衛星繞地球一圈的時間（軌道週期 T），我們利用物理公式（ω = 2π/T）換算出衛星每秒轉動的角度。",
+            "--- 詳細引用 ---",
+            "參數設定：base_angular_velocity ≈ 0.00105 rad/s (基於軌道週期 T 推導)。",
+            "1. STARFRONT (ToN 2023):",
+            "   - 位置：Section VI.A, Page 11 (Doc p.2569)。",
+            "   - 原文佐證：'The synodic period of Starlink... are configured as 5731s...'. (5731s ≈ 95.5 min, 推導 ω = 2π/T ≈ 0.00109 rad/s)。",
+            "2. SaTCP (INFOCOM 2023):",
+            "   - 位置：Section III.C, Page 3。",
+            "   - 原文佐證：'...orbital period of only 1.59 hours.' (1.59 hr ≈ 5724s)。"
+        ],
+        [
+            "【節點與流量模型來源：STARFRONT, DMTS】",
+            "為什麼設 20 個雲節點、10 個接收端？",
+            "1. **雲節點 (20個)：** 這是為了模擬真實世界中 Amazon AWS 的全球資料中心分佈（STARFRONT 這樣做），讓網路拓樸更貼近現實。",
+            "2. **流量設定：** 參考 GLOBECOM (DMTS) 的實驗設定，他們測試的「多播群組大小」就在 10 到 40 之間，所以我們選 10 是符合學術標準的測試規模。",
+            "--- 詳細引用 ---",
+            "1. 雲節點 (n_clouds=20)：",
+            "   - STARFRONT (ToN 2023)：",
+            "     位置：Section VI.A, Page 10 (Doc p.2568) 'Topology generator'。",
+            "     原文佐證：'First, it uses the distribution of Amazon AWS cloud sites as the available cloud data centers [21].'",
+            "2. 流量與多播設定 (n_srcs=1, n_dests=10, total_time=6)：",
+            "   - DMTS (GLOBECOM 2022)：",
+            "     位置：Section IV 'PERFORMANCE EVALUATION', Page 4 (Doc p.1549)。",
+            "     原文佐證：'We randomly choose the size d of the multicast group in [10, 40]. ... The duration k is randomly chosen within [1, 6]...'。"
+        ],
+        [
+            "【雲對雲連線距離 (thr_cloud_to_cloud) 來源：STARFRONT】",
+            "為什麼設定 3200 公里？",
+            "這參數代表地面骨幹網路（Terrestrial Backbone）的連線能力。STARFRONT 論文中提到，地面光纖網路經常因為繞路（Meandering）導致延遲增加，並舉例「華沙到車里雅賓斯克」的光纖距離約 3200 公里。因此，我們設定 3200 公里作為雲端節點間建立骨幹連線的基準距離，這符合論文中對於跨國/跨洲地面線路長度的描述。",
+            "--- 詳細引用 ---",
+            "參數設定：thr_cloud_to_cloud = 3200.0 (模擬 Terrestrial Backbone Connectivity)。",
+            "1. STARFRONT (ToN 2023):",
+            "   - 位置：Section II 'BACKGROUND AND MOTIVATION', Page 3 (Doc p.2561)。",
+            "   - 原文佐證：文中分析地面網路延遲案例時提到：'Since the fiber distance is approximately 3200km...'。",
+            "   - 論述：此數值 (3200km) 證實了在模擬跨國雲端節點連接時，3200km 是一個符合現實地面光纖網路特性的量級 (Order of Magnitude)。"
+        ],
+        [
+            "【區域距離門檻 (region_dist_thr) 來源：SaTE, STARFRONT, StarPerf】",
+            "為什麼設定 1000 公里？",
+            "這是為了將地球表面劃分為不同的「服務區域」（User Regions）。SaTE 和 StarPerf 的論文都指出，為了處理龐大的衛星網路，必須將地球表面「網格化」（Grid/Hexagonal areas）。設定 1000 公里約等於一個大型網格或中型國家的跨度，這符合論文將使用者與衛星分組（Bucketing）以簡化計算的邏輯。",
+            "--- 詳細引用 ---",
+            "參數設定：region_dist_thr = 1000.0 (作為 Grid/Region Abstraction 的實作參數)。",
+            "1. STARFRONT (ToN 2023):",
+            "   - 位置：Section IV.A, Page 6 (Doc p.2564)。",
+            "   - 原文佐證：'To model the user distribution, we assume the earth surface is discretized into J non-overlapping grid-like regions...'",
+            "2. StarPerf (ICNP 2020):",
+            "   - 位置：Section III.D 'Characterizing network performance', Page 4。",
+            "   - 原文佐證：'STARPERF buckets user requests and satellites into hexagonal areas based on H3 [5].' (支持使用區域化/網格化來管理節點分佈)。"
+        ],
+        [
+            "【可視性與仰角說明】",
+            "為什麼要設定最小仰角？",
+            "學術界主流做法是：只要幾何上「看得到（In Range）」就算連得上。但 SaTCP 論文指出，現實中地平線附近會有建築物遮蔽或訊號不穩。因此，我們設定一個「最小仰角（如 15度）」作為過濾條件，是為了模擬這些現實限制，比單純的「看得到就連」更嚴謹、更 Realistic。",
+            "--- 詳細引用 ---",
+            "1. STARFRONT (ToN 2023):",
+            "   - 位置：Section VI.A, Page 11 (Doc p.2569)。",
+            "   - 原文佐證：'A satellite can be connected to a ground station if only it moves into the transmission range of the ground station.' (採用傳輸範圍/Visibility 模型)。",
+            "2. StarPerf (ICNP 2020):",
+            "   - 位置：Section II.E 'Characterizing user requests', Page 4。",
+            "   - 原文佐證：'...if the user is in the sight of view of the satellites.'",
+            "3. SaTCP (INFOCOM 2023):",
+            "   - 位置：Section III.C, Page 3。",
+            "   - 原文佐證：'However, due to practical reasons like line-of-sight blockages, low signal strength... UTs may undergo frequent handovers.' (支持將仰角視為影響連線的變數進行敏感度分析)。"
+        ],
+        [
+            "不同衛星數量下各個演算法的 cost 差異 -> 數據化",
+            "x 軸：衛星數量（可用子星座/縮放方式產生多個規模）",
+            "y 軸：cost",
+            "spt, dmts, offpa, tvm, strus五個算法都要跑"
+        ]
+    ]
 }

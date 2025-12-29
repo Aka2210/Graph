@@ -11,17 +11,17 @@ def plot_metric(df, metric, output_path):
     """
     plt.figure(figsize=(10, 6))
 
-    for algo in ["DMTS", "OffPA", "TSMTA"]:
-        df_algo = df[df["algo"] == algo].sort_values("graph_id")
+    for algo in ["DMTS", "OffPA", "TSMTA", "SSSP"]:
+        df_algo = df[df["algo"] == algo].sort_values("sat_num")
 
         if df_algo.empty:
             print(f"⚠ Warning: No data for {algo} in {metric}")
             continue
 
-        plt.plot(df_algo["graph_id"], df_algo[metric],
-                 marker='o', label=algo)
+        plt.plot(df_algo["sat_num"], df_algo[metric],
+         marker='o', label=algo)
 
-    plt.xlabel("Graph ID")
+    plt.xlabel("Number of Satellites")
     plt.ylabel(metric)
     plt.title(f"{metric} Comparison Among Algorithms")
     plt.legend()
@@ -48,8 +48,7 @@ def main():
     print(f"📘 Loading Excel: {excel_path}")
     df = pd.read_excel(excel_path)
 
-    # graph_1 → 1
-    df["graph_id"] = df["graph"].str.extract(r"graph_(\d+)").astype(int)
+    df["sat_num"] = df["graph"].str.extract(r"graph_(\d+)").astype(int)
 
     # Excel 名稱
     excel_name = os.path.splitext(os.path.basename(excel_path))[0]
