@@ -379,18 +379,50 @@ def generate_graph_sequence_realistic(
 ):
     """
     生成一組基於真實 Walker 星座模型的動態圖。
-    - 節點型別：src, dest, satellite, cloud
-    - 衛星依 Walker 星座佈局並移動
-    - 地面站 (src, dest, cloud) 隨機分佈於地球表面
-    - 地對空連線：基於最小仰角
-    - 空對空連線 (ISL)：基於結構化鄰居與地球遮擋
+    修改重點：
+    1. Src/Dest/Cloud 的座標由內部寫死的 Fixed Seed 生成 -> 位置永遠固定。
+    2. Satellite 的行為、所有節點的 ID 分配、頻寬數值由傳入的 seed 生成 -> 保持隨機性。
     """
 
+    # --- [1. 變動隨機生成器] ---
+    # 這是原本邏輯用的，負責 ID shuffle, 頻寬, Cache 等
+    # 每次執行時，因為傳入的 seed 不同，這裡的行為會不一樣
     rng = random.Random(seed)
     np.random.seed(seed)
+    
+    # --- [2. 固定隨機生成器] ---
+    # 專門用來生成座標。我們給它寫死的種子 (Fixed Seeds)。
+    # 這樣不管外面 seed 怎麼變，這裡吐出來的座標永遠一樣。
+    # 為了避免 Src 數量改變影響 Dest，我們分別用不同的種子。
+    rng_src_pos = random.Random(1001)   # 專門生成 Src 位置
+    rng_dest_pos = random.Random(2002)  # 專門生成 Dest 位置
+    rng_cloud_pos = random.Random(3003) # 專門生成 Cloud 位置
+
+    def _gen_pos_pool(count, generator):
+        """利用指定的固定生成器產生座標池"""
+        positions = []
+        for _ in range(count):
+            lat_rad = math.radians(generator.uniform(-70, 70))
+            lon_rad = math.radians(generator.uniform(-180, 180))
+            x = EARTH_RADIUS_KM * np.cos(lat_rad) * np.cos(lon_rad)
+            y = EARTH_RADIUS_KM * np.cos(lat_rad) * np.sin(lon_rad)
+            z = EARTH_RADIUS_KM * np.sin(lat_rad)
+            positions.append((x, y, z))
+        return positions
+
+    # 預先生成「絕對固定」的座標列表
+    fixed_src_coords = _gen_pos_pool(n_srcs, rng_src_pos)
+    fixed_dest_coords = _gen_pos_pool(n_dests, rng_dest_pos)
+    fixed_cloud_coords = _gen_pos_pool(n_clouds, rng_cloud_pos)
+
+    # 轉為迭代器以便依序取用
+    src_iter = iter(fixed_src_coords)
+    dest_iter = iter(fixed_dest_coords)
+    cloud_iter = iter(fixed_cloud_coords)
         
     nodes_meta = []
     
+    # 衛星 Meta 生成 (這是數學計算，本質上就是固定的，除非參數改變)
     if n_sats > 0:
         sat_metas_list = generate_walker_meta(
             num_sats_total=n_sats,
@@ -409,26 +441,37 @@ def generate_graph_sequence_realistic(
                   ["cloud"] * n_clouds + 
                   ["src"] * n_srcs + 
                   ["dest"] * n_dests)
+    
+    # [關鍵點]：這裡使用 `rng` (變動種子) 來洗牌
+    # 這代表雖然 Src/Dest 的「位置」固定了，但它們被分配到的 ID (v0, v1...) 每次都會變
+    # 衛星的排列順序也會變，保留了您想要的「原本的隨機性」
     rng.shuffle(node_types)
 
     for idx, n_type in enumerate(node_types):
         name = f"v{idx}"
+        
         if n_type == "satellite":
             meta = next(sat_meta_iter)
             meta["name"] = name
-            meta["bandwidth"] = 0
+            # 頻寬使用 rng 生成 -> 每次跑都會變
+            meta["bandwidth"] = 0 
+        
         elif n_type in ("src", "dest", "cloud"):
-            lat_rad = math.radians(rng.uniform(-70, 70))
-            lon_rad = math.radians(rng.uniform(-180, 180))
-            x = EARTH_RADIUS_KM * np.cos(lat_rad) * np.cos(lon_rad)
-            y = EARTH_RADIUS_KM * np.cos(lat_rad) * np.sin(lon_rad)
-            z = EARTH_RADIUS_KM * np.sin(lat_rad)
+            # 這裡從我們預先生成的「固定池」中拿座標
+            if n_type == "src":
+                pos0 = next(src_iter)
+            elif n_type == "dest":
+                pos0 = next(dest_iter)
+            else: # cloud
+                pos0 = next(cloud_iter)
+            
             meta = dict(
                 name=name,
                 type=n_type,
                 mobile=False,
                 orbit=None,
-                pos0=(x, y, z),
+                pos0=pos0, # <--- 強制使用固定座標
+                # 頻寬使用 rng 生成 -> 每次跑都會變
                 bandwidth=(rng.randint(15, 25) if n_type == "src" else 0)
             )
         nodes_meta.append(meta)
@@ -439,6 +482,9 @@ def generate_graph_sequence_realistic(
         for meta in nodes_meta:
             p = get_pos(meta, t)
             node_type = meta["type"]
+            
+            # 以下所有屬性生成都使用 rng (變動種子)
+            # 這保證了除座標外，其他屬性保有隨機性
             storage_model = None
             d = 0.0
             z_val = 0.0
@@ -448,6 +494,7 @@ def generate_graph_sequence_realistic(
             cache = False
             capacity = round(rng.uniform(100, 500), 2)
             storage_used = 0.0
+            
             if node_type == "dest":
                 req_size = round(rng.uniform(5, 50), 2)
             elif node_type == "cloud":
@@ -483,6 +530,7 @@ def generate_graph_sequence_realistic(
             if node_type == "src":
                 G.nodes[meta["name"]]["data_size"] = 1
         
+        # --- 建圖連線邏輯 (保持不變) ---
         srcs  = [n for n, d in G.nodes(data=True) if d["type"] == "src"]
         dests = [n for n, d in G.nodes(data=True) if d["type"] == "dest"]
         sats  = [n for n, d in G.nodes(data=True) if d["type"] == "satellite"]
@@ -493,20 +541,18 @@ def generate_graph_sequence_realistic(
         avg_src_bw = (sum(src_bws) / len(src_bws)) if src_bws else 10
         _assign_regions_to_dests(G, dests, pos, region_dist_thr)
 
-        # Section 3.1 Accurate Emulation of LEO Constellations
-        # “ground stations can only communicate with satellites that are above a configurable minimum elevation above the horizon.”
-        # “Celestial then uses satellite and ground station positions to calculate ground station uplinks and the satellite network topology.”
+        # Ground -> Satellite
         ground_stations = srcs + dests + clouds
         for gnd_node in ground_stations:
             for sat_node in sats:
                 if get_elevation_angle(pos[gnd_node], pos[sat_node]) > MIN_ELEVATION_ANGLE:
-                    bw = _sample_edge_bw(avg_src_bw * 20, rng, 0.8, 1.2)
+                    bw = _sample_edge_bw(avg_src_bw * 20, rng, 0.8, 1.2) # 使用變動 rng
                     lat_gs = realistic_latency(pos[gnd_node], pos[sat_node], G.nodes[gnd_node]["type"], G.nodes[sat_node]["type"])
                     add_edge_with_cost(G, gnd_node, sat_node, lat_gs, bw)
                     lat_sg = realistic_latency(pos[sat_node], pos[gnd_node], G.nodes[sat_node]["type"], G.nodes[gnd_node]["type"])
                     add_edge_with_cost(G, sat_node, gnd_node, lat_sg, bw)
 
-        # Starlink +GRID pattern。
+        # Satellite -> Satellite (ISL)
         sats_by_plane = {}
         for s in sats:
             orb_id = G.nodes[s]["orbit_id"]
@@ -520,7 +566,7 @@ def generate_graph_sequence_realistic(
             for k_idx, sat_a in enumerate(plane_sats):
                 sat_b_intra = plane_sats[(k_idx + 1) % num_sats_in_plane]
                 if not G.has_edge(sat_a, sat_b_intra) and not is_earth_blocking(pos[sat_a], pos[sat_b_intra]):
-                    bw = _sample_edge_bw(avg_src_bw * 50, rng, 0.8, 1.2)
+                    bw = _sample_edge_bw(avg_src_bw * 50, rng, 0.8, 1.2) # 使用變動 rng
                     lat_ab = realistic_latency(pos[sat_a], pos[sat_b_intra], "satellite", "satellite")
                     lat_ba = realistic_latency(pos[sat_b_intra], pos[sat_a], "satellite", "satellite")
                     add_edge_with_cost(G, sat_a, sat_b_intra, lat_ab, bw)
@@ -532,28 +578,30 @@ def generate_graph_sequence_realistic(
                     if k_idx < len(adj_plane_sats):
                         sat_b_inter = adj_plane_sats[k_idx]
                         if not G.has_edge(sat_a, sat_b_inter) and not is_earth_blocking(pos[sat_a], pos[sat_b_inter]):
-                            bw = _sample_edge_bw(avg_src_bw * 50, rng, 0.8, 1.2)
+                            bw = _sample_edge_bw(avg_src_bw * 50, rng, 0.8, 1.2) # 使用變動 rng
                             lat_ab = realistic_latency(pos[sat_a], pos[sat_b_inter], "satellite", "satellite")
                             lat_ba = realistic_latency(pos[sat_b_inter], pos[sat_a], "satellite", "satellite")
                             add_edge_with_cost(G, sat_a, sat_b_inter, lat_ab, bw)
                             add_edge_with_cost(G, sat_b_inter, sat_a, lat_ba, bw)
 
+        # Cloud -> Cloud
         for i in range(len(clouds)):
             for j in range(i + 1, len(clouds)):
                 a, b = clouds[i], clouds[j]
                 dist_km = euclid_latency(pos[a], pos[b])
                 if dist_km <= thr_cloud_to_cloud:
-                    bw = _sample_edge_bw(avg_src_bw * 10, rng, 0.8, 1.2)
+                    bw = _sample_edge_bw(avg_src_bw * 10, rng, 0.8, 1.2) # 使用變動 rng
                     lat_ab = realistic_latency(pos[a], pos[b], "cloud", "cloud")
                     lat_ba = realistic_latency(pos[b], pos[a], "cloud", "cloud")
                     add_edge_with_cost(G, a, b, lat_ab, bw)
                     add_edge_with_cost(G, b, a, lat_ba, bw)
 
+        # Src -> Cloud
         for s in srcs:
             for c in clouds:
                 dist_km = euclid_latency(pos[s], pos[c])
                 if dist_km <= thr_cloud_to_cloud:
-                    bw = _sample_edge_bw(avg_src_bw * 5, rng, 0.8, 1.2)
+                    bw = _sample_edge_bw(avg_src_bw * 5, rng, 0.8, 1.2) # 使用變動 rng
                     lat_sc = realistic_latency(pos[s], pos[c], "src", "cloud")
                     lat_cs = realistic_latency(pos[c], pos[s], "cloud", "src")
                     add_edge_with_cost(G, s, c, lat_sc, bw)
@@ -565,9 +613,6 @@ def generate_graph_sequence_realistic(
             print(f"[t={t}] 警告: 圖中沒有任何 backbone 節點 (sats/clouds)。")
         
         elif backbone_nodes: 
-            # For algorithmic convenience, we ensure that the time-varying directed graph 
-            # remains strongly connected by connecting isolated ground nodes to their nearest 
-            # satellite or cloud node and by adding auxiliary links between disconnected components.
             for s in srcs:
                 if G.out_degree(s) == 0:
                     closest_bb_node = min(backbone_nodes, key=lambda n: euclid_latency(pos[s], pos[n]))

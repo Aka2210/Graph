@@ -11,7 +11,7 @@ def plot_metric(df, metric, output_path):
     """
     plt.figure(figsize=(10, 6))
 
-    for algo in ["DMTS", "OffPA", "TSMTA", "SSSP"]:
+    for algo in ["DMTS", "TSMTA", "SSSP"]:
         df_algo = df[df["algo"] == algo].sort_values("sat_num")
 
         if df_algo.empty:
