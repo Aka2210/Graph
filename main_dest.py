@@ -111,9 +111,9 @@ def main():
 
     # Excel 檔名
     excel_path = (
-        f"results_ns{cfg['start_sats']}"
+        f"results_ns{cfg['n_sats']}"
         f"_nc{cfg['n_clouds']}"
-        f"_nd{cfg['n_dests']}"
+        f"_nd{cfg['start_dests']}"
         f"_p{cfg['num_planes']}"
         f"_t{cfg['total_time']}_avg_std.xlsx" # 檔名更新以反映包含標準差
     )
@@ -214,7 +214,7 @@ def main():
 
     # 4. 統計計算與寫入 Excel
     print(f"\n=== 實驗結束，正在寫入 Excel: {excel_path} ===")
-    graph_name = f"graph_{cfg['n_sats']}_avg{NUM_RUNS}"
+    graph_name = f"graph_{cfg['n_dests']}_avg{NUM_RUNS}"
 
     for algo in algo_names:
         # 取得列表

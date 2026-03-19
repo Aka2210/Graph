@@ -1,8 +1,8 @@
 {
-    "start_sats": 50,
-    "start_dests": 100,
+    "start_sats": 300,
+    "start_dests": 50,
     "seed_offset": 1,
-    "n_sats": 50,
+    "n_sats": 300,
     "n_clouds": 20,
     "n_srcs": 1,
     "n_dests": 100,

@@ -6,280 +6,33 @@ import random
 import sys
 import numpy as np
 import networkx as nx
+
 from Save_And_Read_Graphs import save_graph_sequence_to_txt
 from Save_And_Read_Graphs import load_graph_sequence_from_txt
 from Debug import are_graphs_equal
-# from Save_And_Read_Graphs import save_graph_sequence_to_txt
-# from Save_And_Read_Graphs import load_graph_sequence_from_txt
-# from Debug import print_graphs
-# from Debug import are_graphs_equal
 
-# --- 真實模型所需的新增常數 ---
-
-# 地球半徑 (km)
 EARTH_RADIUS_KM = 6371.0
-# 地對空連線的最小仰角 (degrees)
-MIN_ELEVATION_ANGLE = 15.0 
+MIN_ELEVATION_ANGLE = 30.0
+REMOTE_AREA_MIN_DIST_KM = 500.0
 
-# --- 真實模型所需的新增輔助函數 ---
+def get_cost_traffic_by_distance(p1, p2, u_type, v_type, base_cost_per_km=0.001):
+    dist_km = float(math.dist(p1, p2))
+    dist_factor = (dist_km / 10.0)
 
-def force_connect_ground(G, ground, sats):
-    """
-    ground = src/dest/cloud
-    sats   = 所有衛星
-    強制 ground 連接到附近 2 顆 satellite（雙向）
-    """
-    if not sats:
-        return
+    multiplier = 1.0
+    cost = dist_factor * base_cost_per_km * multiplier
+    return max(cost, 1e-9)
 
-    # 挑最近兩顆
-    sats_sorted = sorted(
-        sats,
-        key=lambda s: euclid_latency(G.nodes[ground]["pos"], G.nodes[s]["pos"])
-    )[:2]
-
-    for s in sats_sorted:
-        # latency=1, bandwidth=1000 → 不破壞演算法
-        add_edge_with_cost(G, ground, s, latency=1, bandwidth=1000)
-        add_edge_with_cost(G, s, ground, latency=1, bandwidth=1000)
-
-def ensure_strongly_connected(G):
-    """
-    修補成 strongly connected（強連通）
-    OffPA 必須要求所有節點間 directed reachable
-    """
-    UG = G.to_undirected()
-    comps = list(nx.connected_components(UG))
-
-    if len(comps) <= 1:
-        return
-
-    comps = [list(c) for c in comps]
-
-    for i in range(len(comps) - 1):
-        A = comps[i]
-        B = comps[i + 1]
-
-        best_dist = float("inf")
-        best_pair = None
-
-        # 找跨 component 最近的兩點
-        for u in A:
-            for v in B:
-                d = euclid_latency(G.nodes[u]["pos"], G.nodes[v]["pos"])
-                if d < best_dist:
-                    best_dist = d
-                    best_pair = (u, v)
-
-        u, v = best_pair
-
-        # φ 加雙向邊
-        add_edge_with_cost(G, u, v, latency=1, bandwidth=1000)
-        add_edge_with_cost(G, v, u, latency=1, bandwidth=1000)
-
-        print(f"[ensureSCC] Patch {u} ↔ {v}, dist={best_dist:.2f}")
-
-def get_elevation_angle(p_ground, p_sat):
-    """
-    計算衛星相對於地面站的仰角 (degrees)
-    p_ground 和 p_sat 都是 (x,y,z) 地心座標
-    """
-    # 確保 p_ground 在地球表面上 (或至少有一個範數)
-    norm_p_ground = np.linalg.norm(p_ground)
-    if norm_p_ground == 0:
-        return -90.0 # 無法計算
-
-    # 向量：從地面站指向上方 (本地 Z 軸 / 天頂)
-    vec_zenith = np.array(p_ground) / norm_p_ground
-    
-    # 向量：從地面站指向衛星
-    vec_gnd_to_sat = np.array(p_sat) - np.array(p_ground)
-    norm_vec_gnd_to_sat = np.linalg.norm(vec_gnd_to_sat)
-    if norm_vec_gnd_to_sat == 0:
-        return 90.0 # 衛星就在地面站上
-
-    # 計算天頂角 (Zenith Angle)
-    dot_product = np.dot(vec_zenith, vec_gnd_to_sat)
-    
-    # 避免 acos 範圍錯誤
-    cos_zenith_angle = max(-1.0, min(1.0, dot_product / norm_vec_gnd_to_sat))
-    
-    zenith_angle_rad = np.arccos(cos_zenith_angle)
-    
-    # 仰角 = 90 度 - 天頂角
-    elevation_rad = (np.pi / 2.0) - zenith_angle_rad
-    return np.degrees(elevation_rad)
-
-def is_earth_blocking(p1, p2, earth_radius=EARTH_RADIUS_KM):
-    """
-    檢查 p1 和 p2 之間的直線路徑是否被地球遮擋
-    Section 3.1 Accurate Emulation of LEO Constellations
-    “ISL connectivity depends on the line of sight between two 
-    adjacent satellites, e.g., if a possible laser link drops 
-    below a certain altitude, the Earth’s atmosphere may refract 
-    that laser, causing an intermittent loss of connectivity.”
-    """
-    p1 = np.array(p1)
-    p2 = np.array(p2)
-    
-    # 向量 v = p2 - p1
-    v = p2 - p1
-    norm_v_sq = np.dot(v, v)
-    if norm_v_sq == 0:
-        return False # 兩點重合
-
-    # 向量 u = -p1 (從 p1 指向原點)
-    u = -p1
-    
-    # 計算 p1 到 (p1p2連線的最近原點) 的投影長度比例
-    t = np.dot(u, v) / norm_v_sq
-    
-    # 如果最近點在 p1 和 p2 之間 (0 <= t <= 1)
-    if 0 <= t <= 1:
-        # 計算最近點
-        closest_point = p1 + t * v
-        # 如果最近點在地球半徑內，則被遮擋
-        if np.linalg.norm(closest_point) < earth_radius:
-            return True
-            
-    # 如果最近點不在線段上，我們只需要檢查兩個端點
-    # (但此處假設 p1, p2 都在地球外，所以此檢查可省略)
-    return False
-
-def generate_walker_meta(
-    num_sats_total=60, 
-    num_planes=6, 
-    altitude_km=550.0, 
-    inclination_deg=53.0,
-    f_phasing_param=0,
-    base_angular_velocity=0.05
-):
-    """
-    生成 Walker 星座的元數據 (meta)
-    修改版：支援衛星總數無法被平面數整除的情況，將自動平均分配。
-    """
-    
-    # 計算基礎數量與餘數
-    base_sats_per_plane = num_sats_total // num_planes
-    remainder = num_sats_total % num_planes
-    
-    radius_km = EARTH_RADIUS_KM + altitude_km
-    inclination_rad = math.radians(inclination_deg)
-    
-    satellites_meta = []
-    
-    for p_idx in range(num_planes):
-        # 1. 計算軌道平面的經度 (RAAN)
-        raan_rad = math.radians(p_idx * (360.0 / num_planes))
-        
-        # 決定這個平面有幾顆衛星
-        # 如果 p_idx 小於餘數，就多分配一顆 (均勻分散餘數)
-        if p_idx < remainder:
-            current_plane_sats_count = base_sats_per_plane + 1
-        else:
-            current_plane_sats_count = base_sats_per_plane
-
-        for k_idx in range(current_plane_sats_count):
-            # 2. 計算衛星在軌道內的初始相位 (Phase)
-            # 注意：這裡的分母要用該平面「實際」的衛星數，確保在該平面內均勻分佈
-            phase_in_plane = math.radians(k_idx * (360.0 / current_plane_sats_count))
-            
-            # 3. 應用 F 參數進行平面間相位偏移
-            # Walker 星座定義通常基於 Total Satellites，這裡維持原邏輯
-            phase_offset = math.radians(f_phasing_param * (p_idx * 360.0 / num_sats_total))
-            
-            phi0 = phase_in_plane + phase_offset
-            
-            meta = dict(
-                # 'name' 將在主函數中分配
-                type="satellite",
-                mobile=True,
-                orbit=dict(
-                    r=radius_km, 
-                    inc=inclination_rad, 
-                    raan=raan_rad,           # 軌道平面的經度
-                    w=base_angular_velocity, # 軌道角速度
-                    orbit_id=p_idx,          # 軌道平面 ID
-                    id_in_plane=k_idx        # 在軌道內的 ID
-                ),
-                phi0=phi0,
-            )
-            satellites_meta.append(meta)
-            
-    return satellites_meta
-
-# --- 保留的輔助函數 (稍作修改或原封不動) ---
-
-def euclid_latency(p1, p2):
-    # 此函數現在計算的是 3D 地心座標系中的直線距離 (km)
-    return float(math.dist(p1, p2))
-
-def realistic_latency(p1, p2, u_type, v_type, bin_size_ms=5.0):
-    """
-    修改版：加入 bin_size_ms 參數進行「階梯化」。
-    bin_size_ms: 設為 0 代表連續變化（原本模式）。
-                 設為 5.0 代表延遲會被 rounded 到最近的 5ms 倍數 (5, 10, 15...)
-                 這樣可以讓 Cost 在一段時間內保持恆定。
-    """
-    # 距離 (km -> m)
-    distance_km = float(math.dist(p1, p2))
-    d = distance_km * 1000.0
-    
-    # 傳播速度
-    if u_type == "cloud" and v_type == "cloud":
-        speed = 2e8  # 光纖
-    else:
-        speed = 3e8  # 空間鏈路
-        
-    # 傳播延遲 (ms)
-    prop_delay = d / speed * 1000.0
-    
-    # 處理延遲 (ms)
-    if u_type == "satellite" and v_type == "satellite":
-        proc_delay = 1.0
-    elif "cloud" in (u_type, v_type):
-        proc_delay = 0.5
-    else:
-        proc_delay = 0.2
-        
-    total_latency = prop_delay + proc_delay
-
-    # --- 關鍵修改：階梯化 (Quantization) ---
-    if bin_size_ms > 0:
-        # 例如: 12.3ms -> round(12.3/5)*5 = 2*5 = 10ms
-        # 例如: 13.8ms -> round(13.8/5)*5 = 3*5 = 15ms
-        total_latency = round(total_latency / bin_size_ms) * bin_size_ms
-        # 確保至少有一個基本延遲，避免變成 0
-        total_latency = max(total_latency, bin_size_ms)
-
-    return total_latency
-
-def get_cost_traffic(u_type, v_type, c_base=0.02, alpha=10, beta=6):
-    # Region/User 與 Cloud（地面）
-    if (u_type in ("src", "dest") and v_type == "cloud") or \
-       (v_type in ("src", "dest") and u_type == "cloud"):
-        return c_base
-    # Region/User 與 Satellite
-    if (u_type in ("src", "dest") and v_type == "satellite") or \
-       (v_type in ("src", "dest") and u_type == "satellite"):
-        return alpha * c_base
-    # Cloud 與 Cloud（地面骨幹）
-    if u_type == "cloud" and v_type == "cloud":
-        return c_base
-    # Cloud 與 Satellite
-    if (u_type == "cloud" and v_type == "satellite") or \
-       (v_type == "cloud" and u_type == "satellite"):
-        return alpha * c_base
-    # Satellite 與 Satellite（ISL）
-    if u_type == "satellite" and v_type == "satellite":
-        return beta * c_base
-    # 預設
-    return c_base
-
-def add_edge_with_cost(G, u, v, latency, bandwidth, c_base=0.02, alpha=10, beta=6):
+def add_edge_with_cost(G, u, v, latency, bandwidth, penalty_mult=1.0):
+    p1 = G.nodes[u]["pos"]
+    p2 = G.nodes[v]["pos"]
     u_type = G.nodes[u]["type"]
     v_type = G.nodes[v]["type"]
-    cost_traffic = get_cost_traffic(u_type, v_type, c_base, alpha, beta)
+    
+    cost_traffic = get_cost_traffic_by_distance(p1, p2, u_type, v_type)
+    
+    cost_traffic *= penalty_mult
+    
     G.add_edge(
         u, v,
         latency=latency,
@@ -289,57 +42,158 @@ def add_edge_with_cost(G, u, v, latency, bandwidth, c_base=0.02, alpha=10, beta=
         virtual=False
     )
 
-def get_pos(meta, t):
-    """
-    小工具：取得節點在時間 t 的位置（支援「共用軌道參數」）
-    使用 ECEF (地心) 座標系
-    """
-    if not meta["mobile"]:
-        return meta["pos0"]
+def euclid_latency(p1, p2):
+    return float(math.dist(p1, p2))
+
+def realistic_latency(p1, p2, u_type, v_type, bin_size_ms=5.0):
+    distance_km = float(math.dist(p1, p2))
+    d = distance_km * 1000.0
     
+    if u_type == "cloud" and v_type == "cloud":
+        speed = 2e8
+    else:
+        speed = 3e8
+        
+    prop_delay = d / speed * 1000.0
+    
+    if u_type == "satellite" and v_type == "satellite":
+        proc_delay = 1.0
+    elif "cloud" in (u_type, v_type):
+        proc_delay = 0.5
+    else:
+        proc_delay = 0.2
+        
+    total_latency = prop_delay + proc_delay
+
+    if bin_size_ms > 0:
+        total_latency = round(total_latency / bin_size_ms) * bin_size_ms
+        total_latency = max(total_latency, bin_size_ms)
+
+    return total_latency
+
+def get_elevation_angle(p_ground, p_sat):
+    norm_p_ground = np.linalg.norm(p_ground)
+    if norm_p_ground == 0: return -90.0
+    vec_zenith = np.array(p_ground) / norm_p_ground
+    vec_gnd_to_sat = np.array(p_sat) - np.array(p_ground)
+    norm_vec_gnd_to_sat = np.linalg.norm(vec_gnd_to_sat)
+    if norm_vec_gnd_to_sat == 0: return 90.0
+    dot_product = np.dot(vec_zenith, vec_gnd_to_sat)
+    cos_zenith_angle = max(-1.0, min(1.0, dot_product / norm_vec_gnd_to_sat))
+    zenith_angle_rad = np.arccos(cos_zenith_angle)
+    elevation_rad = (np.pi / 2.0) - zenith_angle_rad
+    return np.degrees(elevation_rad)
+
+def is_earth_blocking(p1, p2, earth_radius=EARTH_RADIUS_KM):
+    p1 = np.array(p1)
+    p2 = np.array(p2)
+    v = p2 - p1
+    norm_v_sq = np.dot(v, v)
+    if norm_v_sq == 0: return False
+    u = -p1
+    t = np.dot(u, v) / norm_v_sq
+    if 0 <= t <= 1:
+        closest_point = p1 + t * v
+        if np.linalg.norm(closest_point) < earth_radius:
+            return True
+    return False
+
+def force_connect_ground(G, ground, sats):
+    if not sats: return
+    sats_sorted = sorted(
+        sats,
+        key=lambda s: euclid_latency(G.nodes[ground]["pos"], G.nodes[s]["pos"])
+    )[:2]
+    
+    for s in sats_sorted:
+        add_edge_with_cost(G, ground, s, latency=1, bandwidth=1000, penalty_mult=10.0)
+        add_edge_with_cost(G, s, ground, latency=1, bandwidth=1000, penalty_mult=10.0)
+
+def ensure_strongly_connected(G):
+    UG = G.to_undirected()
+    comps = list(nx.connected_components(UG))
+    if len(comps) <= 1: return
+    
+    comps = [list(c) for c in comps]
+    comps.sort(key=lambda x: min(x))
+    
+    for i in range(len(comps) - 1):
+        A = comps[i]
+        B = comps[i + 1]
+        best_dist = float("inf")
+        best_pair = None
+        
+        for u in A:
+            for v in B:
+                d = euclid_latency(G.nodes[u]["pos"], G.nodes[v]["pos"])
+                if d < best_dist:
+                    best_dist = d
+                    best_pair = (u, v)
+        
+        if best_pair:
+            u, v = best_pair
+            add_edge_with_cost(G, u, v, latency=1, bandwidth=1000, penalty_mult=10.0)
+            add_edge_with_cost(G, v, u, latency=1, bandwidth=1000, penalty_mult=10.0)
+
+def generate_walker_meta(num_sats_total=60, num_planes=6, altitude_km=550.0, inclination_deg=53.0, f_phasing_param=0, base_angular_velocity=0.05):
+    radius_km = EARTH_RADIUS_KM + altitude_km
+    inclination_rad = math.radians(inclination_deg)
+    satellites_meta = []
+    
+    FIXED_SLOT_SPACING_DEG = 360.0 / 20.0
+    
+    for i in range(num_sats_total):
+        p_idx = i % num_planes
+        k_idx = i // num_planes
+        
+        raan_rad = math.radians(p_idx * (360.0 / num_planes))
+        phase_in_plane = math.radians(k_idx * FIXED_SLOT_SPACING_DEG)
+        
+        total_slots_theoretical = num_planes * (360.0 / FIXED_SLOT_SPACING_DEG)
+        phase_offset = math.radians(f_phasing_param * (p_idx * 360.0 / total_slots_theoretical))
+        
+        phi0 = phase_in_plane + phase_offset
+        
+        meta = dict(
+            type="satellite",
+            mobile=True,
+            orbit=dict(
+                r=radius_km,
+                inc=inclination_rad,
+                raan=raan_rad,
+                w=base_angular_velocity,
+                orbit_id=p_idx,
+                id_in_plane=k_idx
+            ),
+            phi0=phi0,
+        )
+        satellites_meta.append(meta)
+        
+    return satellites_meta
+
+def get_pos(meta, t):
+    if not meta["mobile"]: return meta["pos0"]
     if "orbit" in meta and meta["orbit"] is not None:
         orb = meta["orbit"]
-        r   = orb["r"]
-        inc = orb["inc"]
-        raan= orb["raan"] # 軌道平面經度
-        w   = orb["w"]
+        r, inc, raan, w = orb["r"], orb["inc"], orb["raan"], orb["w"]
         
-        # 1. 計算衛星在軌道平面上的當前相位
         phi_t = meta["phi0"] + w * t
         
-        # 2. 計算在 2D 軌道平面上的座標 (z=0)
         x_orb = r * np.cos(phi_t)
         y_orb = r * np.sin(phi_t)
         
-        # 3. 依據軌道傾角 (inc) 進行旋轉 (繞 X 軸)
         x_rot_i = x_orb
         y_rot_i = y_orb * np.cos(inc)
         z_rot_i = y_orb * np.sin(inc)
         
-        # 4. 依據 RAAN (raan) 進行旋轉 (繞 Z 軸)
         x = x_rot_i * np.cos(raan) - y_rot_i * np.sin(raan)
         y = x_rot_i * np.sin(raan) + y_rot_i * np.cos(raan)
         z = z_rot_i
-        
         return x, y, z
-    
     raise ValueError(f"Invalid mobile node without orbit info: {meta}")
 
 def _sample_edge_bw(avg, rng, lower_ratio=0.4, upper_ratio=1.8, min_bw=10):
-    # 為了符合DMST論文中的實驗環境
     return 1000
-    """
-    回傳一個整數的 edge bandwidth。
-    在 [lower_ratio*avg, upper_ratio*avg] 區間內隨機抽樣，並保證至少 min_bw。
-    """
-    if lower_ratio > upper_ratio:
-        raise ValueError(f"lower_ratio ({lower_ratio}) 必須 <= upper_ratio ({upper_ratio})")
-    
-    if avg <= 0:
-        return min_bw
-    
-    ratio = rng.uniform(lower_ratio, upper_ratio)
-    return max(min_bw, int(avg * ratio))
 
 def _assign_regions_to_dests(G, dests, pos, thr):
     H = nx.Graph()
@@ -363,66 +217,109 @@ def _assign_regions_to_dests(G, dests, pos, thr):
     G.graph["regions"] = regions
 
 def generate_graph_sequence_realistic(
-    n_sats=60,
-    n_clouds=10,
-    n_srcs=5,
-    n_dests=25,
-    total_time=10,
-    seed=42,
-    num_planes=6,           
-    altitude_km=550.0,
-    inclination_deg=53.0,
-    f_phasing_param=0,
-    base_angular_velocity=0.05,
-    thr_cloud_to_cloud=2000.0,
-    region_dist_thr=1000.0
+    n_sats=60, n_clouds=10, n_srcs=5, n_dests=25, total_time=10, seed=42,
+    num_planes=6, altitude_km=550.0, inclination_deg=53.0, f_phasing_param=0,
+    base_angular_velocity=0.05, thr_cloud_to_cloud=2000.0, region_dist_thr=1000.0
 ):
-    """
-    生成一組基於真實 Walker 星座模型的動態圖。
-    修改重點：
-    1. Src/Dest/Cloud 的座標由內部寫死的 Fixed Seed 生成 -> 位置永遠固定。
-    2. Satellite 的行為、所有節點的 ID 分配、頻寬數值由傳入的 seed 生成 -> 保持隨機性。
-    """
-
-    # --- [1. 變動隨機生成器] ---
-    # 這是原本邏輯用的，負責 ID shuffle, 頻寬, Cache 等
-    # 每次執行時，因為傳入的 seed 不同，這裡的行為會不一樣
     rng = random.Random(seed)
+    rng_node = random.Random(seed + 99991)
     np.random.seed(seed)
-    
-    # --- [2. 固定隨機生成器] ---
-    # 專門用來生成座標。我們給它寫死的種子 (Fixed Seeds)。
-    # 這樣不管外面 seed 怎麼變，這裡吐出來的座標永遠一樣。
-    # 為了避免 Src 數量改變影響 Dest，我們分別用不同的種子。
-    rng_src_pos = random.Random(1001)   # 專門生成 Src 位置
-    rng_dest_pos = random.Random(2002)  # 專門生成 Dest 位置
-    rng_cloud_pos = random.Random(3003) # 專門生成 Cloud 位置
+    rng_src_pos = random.Random(1001)
+    rng_dest_pos = random.Random(2002)
+    rng_cloud_pos = random.Random(3003)
 
-    def _gen_pos_pool(count, generator):
-        """利用指定的固定生成器產生座標池"""
-        positions = []
-        for _ in range(count):
-            lat_rad = math.radians(generator.uniform(-70, 70))
-            lon_rad = math.radians(generator.uniform(-180, 180))
+    def _gen_random_sphere_pos(generator):
+        lat_rad = math.radians(generator.uniform(-70, 70))
+        lon_rad = math.radians(generator.uniform(-180, 180))
+        x = EARTH_RADIUS_KM * np.cos(lat_rad) * np.cos(lon_rad)
+        y = EARTH_RADIUS_KM * np.cos(lat_rad) * np.sin(lon_rad)
+        z = EARTH_RADIUS_KM * np.sin(lat_rad)
+        return (x, y, z)
+    
+    def _xyz_to_latlon(p):
+        x, y, z = p
+        lat = math.asin(z / EARTH_RADIUS_KM)
+        lon = math.atan2(y, x)
+        return lat, lon
+
+    def _latlon_to_xyz(lat, lon):
+        x = EARTH_RADIUS_KM * math.cos(lat) * math.cos(lon)
+        y = EARTH_RADIUS_KM * math.cos(lat) * math.sin(lon)
+        z = EARTH_RADIUS_KM * math.sin(lat)
+        return (x, y, z)
+
+    def _gen_remote_centroid(generator, avoid_list, min_dist_km):
+        while True:
+            lat_rad = math.radians(generator.uniform(0, 50))
+            lon_rad = math.radians(generator.uniform(0, 120))
             x = EARTH_RADIUS_KM * np.cos(lat_rad) * np.cos(lon_rad)
             y = EARTH_RADIUS_KM * np.cos(lat_rad) * np.sin(lon_rad)
             z = EARTH_RADIUS_KM * np.sin(lat_rad)
-            positions.append((x, y, z))
-        return positions
+            c = (x, y, z)
+            
+            if all(math.dist(c, p) >= min_dist_km for p in avoid_list):
+                return c
 
-    # 預先生成「絕對固定」的座標列表
-    fixed_src_coords = _gen_pos_pool(n_srcs, rng_src_pos)
-    fixed_dest_coords = _gen_pos_pool(n_dests, rng_dest_pos)
-    fixed_cloud_coords = _gen_pos_pool(n_clouds, rng_cloud_pos)
+    def _gen_remote_dest_clusters(generator, avoid_list, n_dests, min_dist_km, K=3, spread_km=200.0):
+        spread_deg = (spread_km / EARTH_RADIUS_KM) * (180.0 / math.pi)
+        centroids = [_gen_remote_centroid(generator, avoid_list, min_dist_km) for _ in range(K)]
 
-    # 轉為迭代器以便依序取用
+        counts = [n_dests // K] * K
+        for i in range(n_dests % K):
+            counts[i] += 1
+
+        dests = []
+        for c, cnt in zip(centroids, counts):
+            lat0, lon0 = _xyz_to_latlon(c)
+            for _ in range(cnt):
+                dlat = math.radians(generator.uniform(-spread_deg, spread_deg))
+                dlon = math.radians(generator.uniform(-spread_deg, spread_deg))
+                lat = max(math.radians(-70), min(math.radians(70), lat0 + dlat))
+                lon = lon0 + dlon
+                dests.append(_latlon_to_xyz(lat, lon))
+        return dests
+
+    fixed_cloud_coords = []
+    for _ in range(n_clouds):
+        lat = math.radians(rng_cloud_pos.uniform(-20, 20))
+        lon = math.radians(rng_cloud_pos.uniform(-100, -80))
+        fixed_cloud_coords.append(_latlon_to_xyz(lat, lon))
+
+    fixed_src_coords = []
+    for _ in range(n_srcs):
+        lat = math.radians(rng_src_pos.uniform(-5, 5))
+        lon = math.radians(rng_src_pos.uniform(-95, -85))
+        fixed_src_coords.append(_latlon_to_xyz(lat, lon))
+        
+    fixed_dest_coords = []
+    for i in range(n_dests):
+        base_lat = -50.0 + (100.0 / max(1, n_dests - 1)) * i
+        
+        lat_deg = base_lat + rng_dest_pos.uniform(-3, 3)
+        lon_deg = rng_dest_pos.uniform(90, 110)
+        
+        lat = math.radians(lat_deg)
+        lon = math.radians(lon_deg)
+        fixed_dest_coords.append(_latlon_to_xyz(lat, lon))
+
+    avoid_list = fixed_cloud_coords + fixed_src_coords
+
+    K = max(2, min(5, n_dests // 5))
+    fixed_dest_coords = _gen_remote_dest_clusters(
+        generator=rng_dest_pos,
+        avoid_list=avoid_list,
+        n_dests=n_dests,
+        min_dist_km=REMOTE_AREA_MIN_DIST_KM,
+        K=K,
+        spread_km=1000.0,
+    )
+
     src_iter = iter(fixed_src_coords)
     dest_iter = iter(fixed_dest_coords)
     cloud_iter = iter(fixed_cloud_coords)
         
     nodes_meta = []
-    
-    # 衛星 Meta 生成 (這是數學計算，本質上就是固定的，除非參數改變)
+
     if n_sats > 0:
         sat_metas_list = generate_walker_meta(
             num_sats_total=n_sats,
@@ -434,125 +331,122 @@ def generate_graph_sequence_realistic(
         )
     else:
         sat_metas_list = []
-        
     sat_meta_iter = iter(sat_metas_list)
 
-    node_types = (["satellite"] * n_sats + 
-                  ["cloud"] * n_clouds + 
-                  ["src"] * n_srcs + 
-                  ["dest"] * n_dests)
-    
-    # [關鍵點]：這裡使用 `rng` (變動種子) 來洗牌
-    # 這代表雖然 Src/Dest 的「位置」固定了，但它們被分配到的 ID (v0, v1...) 每次都會變
-    # 衛星的排列順序也會變，保留了您想要的「原本的隨機性」
-    rng.shuffle(node_types)
+    node_types = (["cloud"] * n_clouds + ["src"] * n_srcs + ["dest"] * n_dests + ["satellite"] * n_sats)
 
     for idx, n_type in enumerate(node_types):
         name = f"v{idx}"
-        
+
         if n_type == "satellite":
             meta = next(sat_meta_iter)
             meta["name"] = name
-            # 頻寬使用 rng 生成 -> 每次跑都會變
-            meta["bandwidth"] = 0 
-        
+            meta["bandwidth"] = 0
+
+            meta["storage_model"] = "concave"
+            meta["d"] = round(rng_node.uniform(0.005, 0.012), 5)      
+            meta["z"] = 0.8
+            meta["gamma"] = 1.5                                      
+            meta["cache"] = (rng_node.random() < 0.6)                
+            meta["capacity"] = round(rng_node.uniform(500, 1500), 2)
+            meta["req_size"] = 0.0
+            meta["data_size"] = 0.0
+
         elif n_type in ("src", "dest", "cloud"):
-            # 這裡從我們預先生成的「固定池」中拿座標
             if n_type == "src":
                 pos0 = next(src_iter)
+                bw = rng_node.randint(15, 25)
             elif n_type == "dest":
                 pos0 = next(dest_iter)
-            else: # cloud
+                bw = 0
+            else:
                 pos0 = next(cloud_iter)
-            
-            meta = dict(
-                name=name,
-                type=n_type,
-                mobile=False,
-                orbit=None,
-                pos0=pos0, # <--- 強制使用固定座標
-                # 頻寬使用 rng 生成 -> 每次跑都會變
-                bandwidth=(rng.randint(15, 25) if n_type == "src" else 0)
-            )
+                bw = 0
+
+            meta = dict(name=name, type=n_type, mobile=False, orbit=None, pos0=pos0, bandwidth=bw)
+
+            if n_type == "dest":
+                meta["req_size"] = round(rng_node.uniform(200, 800), 2)
+                meta["storage_model"] = None
+                meta["d"] = 0.0
+                meta["z"] = 0.0
+                meta["gamma"] = 0.0
+                meta["cache"] = False
+                meta["capacity"] = 0.0
+                meta["data_size"] = 0.0
+
+            elif n_type == "cloud":
+                meta["storage_model"] = "linear"
+                meta["d"] = round(rng_node.uniform(0.003, 0.008), 5)
+                meta["z"] = 1.0
+                meta["gamma"] = 1.0
+                meta["cache"] = True
+                meta["capacity"] = round(rng_node.uniform(5000, 20000), 2)
+                meta["req_size"] = 0.0
+                meta["data_size"] = 0.0
+
+            elif n_type == "src":
+                meta["data_size"] = 1.0
+                meta["req_size"] = 0.0
+                meta["storage_model"] = None
+                meta["d"] = 0.0
+                meta["z"] = 0.0
+                meta["gamma"] = 0.0
+                meta["cache"] = False
+                meta["capacity"] = 0.0
+
         nodes_meta.append(meta)
 
     graph_seq = []
     for t in range(total_time):
         G = nx.DiGraph(time=t)
+        
         for meta in nodes_meta:
             p = get_pos(meta, t)
             node_type = meta["type"]
-            
-            # 以下所有屬性生成都使用 rng (變動種子)
-            # 這保證了除座標外，其他屬性保有隨機性
-            storage_model = None
-            d = 0.0
-            z_val = 0.0
-            gamma = 0.0
-            req_size = 0.0
-            bandwidth = meta.get("bandwidth", 0)
-            cache = False
-            capacity = round(rng.uniform(100, 500), 2)
-            storage_used = 0.0
-            
-            if node_type == "dest":
-                req_size = round(rng.uniform(5, 50), 2)
-            elif node_type == "cloud":
-                storage_model = "linear"
-                d = round(rng.uniform(0.015, 0.03), 5)
-                z_val = 1.0
-                gamma = 1.0
-                cache = rng.choices([True, False], weights=[0.3, 0.7])[0]
-            elif node_type == "satellite":
-                storage_model = "concave"
-                d = round(rng.uniform(0.02, 0.04), 5)
-                z_val = 0.8
-                gamma = 3.0
-                cache = rng.choices([True, False], weights=[0.3, 0.7])[0]
-            
+
             G.add_node(
                 meta["name"],
                 type=node_type,
                 time=t,
                 pos=p,
-                bandwidth=bandwidth,
-                storage_model=storage_model,
-                d=d,
-                z=z_val,
-                gamma=gamma,
-                req_size=req_size,
-                capacity=capacity,        
-                storage_used=storage_used,
+                bandwidth=meta.get("bandwidth", 0),
+                storage_model=meta.get("storage_model", None),
+                d=meta.get("d", 0.0),
+                z=meta.get("z", 0.0),
+                gamma=meta.get("gamma", 0.0),
+                req_size=meta.get("req_size", 0.0),
+                capacity=meta.get("capacity", 0.0),
+                storage_used=0.0,  
                 orbit_id=(meta["orbit"]["orbit_id"] if meta.get("orbit") else None),
                 orbit_id_in_plane=(meta["orbit"]["id_in_plane"] if meta.get("orbit") else None),
-                cache=cache
+                cache=meta.get("cache", False),
             )
             if node_type == "src":
-                G.nodes[meta["name"]]["data_size"] = 1
-        
-        # --- 建圖連線邏輯 (保持不變) ---
-        srcs  = [n for n, d in G.nodes(data=True) if d["type"] == "src"]
+                G.nodes[meta["name"]]["data_size"] = meta.get("data_size", 1.0)
+
+        srcs = [n for n, d in G.nodes(data=True) if d["type"] == "src"]
         dests = [n for n, d in G.nodes(data=True) if d["type"] == "dest"]
-        sats  = [n for n, d in G.nodes(data=True) if d["type"] == "satellite"]
-        clouds= [n for n, d in G.nodes(data=True) if d["type"] == "cloud"]
+        sats = [n for n, d in G.nodes(data=True) if d["type"] == "satellite"]
+        clouds = [n for n, d in G.nodes(data=True) if d["type"] == "cloud"]
         pos = {n: G.nodes[n]["pos"] for n in G.nodes}
         
         src_bws = [G.nodes[s]["bandwidth"] for s in srcs]
         avg_src_bw = (sum(src_bws) / len(src_bws)) if src_bws else 10
         _assign_regions_to_dests(G, dests, pos, region_dist_thr)
 
-        # Ground -> Satellite
         ground_stations = srcs + dests + clouds
+
         for gnd_node in ground_stations:
             for sat_node in sats:
                 if get_elevation_angle(pos[gnd_node], pos[sat_node]) > MIN_ELEVATION_ANGLE:
-                    bw = _sample_edge_bw(avg_src_bw * 20, rng, 0.8, 1.2) # 使用變動 rng
+                    bw = _sample_edge_bw(avg_src_bw * 20, rng, 0.8, 1.2)
                     lat_gs = realistic_latency(pos[gnd_node], pos[sat_node], G.nodes[gnd_node]["type"], G.nodes[sat_node]["type"])
                     add_edge_with_cost(G, gnd_node, sat_node, lat_gs, bw)
+                    
                     lat_sg = realistic_latency(pos[sat_node], pos[gnd_node], G.nodes[sat_node]["type"], G.nodes[gnd_node]["type"])
                     add_edge_with_cost(G, sat_node, gnd_node, lat_sg, bw)
 
-        # Satellite -> Satellite (ISL)
         sats_by_plane = {}
         for s in sats:
             orb_id = G.nodes[s]["orbit_id"]
@@ -564,13 +458,15 @@ def generate_graph_sequence_realistic(
             plane_sats = sorted(sats_by_plane[p_id], key=lambda n: G.nodes[n]["orbit_id_in_plane"])
             num_sats_in_plane = len(plane_sats)
             for k_idx, sat_a in enumerate(plane_sats):
-                sat_b_intra = plane_sats[(k_idx + 1) % num_sats_in_plane]
-                if not G.has_edge(sat_a, sat_b_intra) and not is_earth_blocking(pos[sat_a], pos[sat_b_intra]):
-                    bw = _sample_edge_bw(avg_src_bw * 50, rng, 0.8, 1.2) # 使用變動 rng
-                    lat_ab = realistic_latency(pos[sat_a], pos[sat_b_intra], "satellite", "satellite")
-                    lat_ba = realistic_latency(pos[sat_b_intra], pos[sat_a], "satellite", "satellite")
-                    add_edge_with_cost(G, sat_a, sat_b_intra, lat_ab, bw)
-                    add_edge_with_cost(G, sat_b_intra, sat_a, lat_ba, bw)
+                if len(plane_sats) > 1:
+                    sat_b_intra = plane_sats[(k_idx + 1) % num_sats_in_plane]
+                    if not G.has_edge(sat_a, sat_b_intra) and not is_earth_blocking(pos[sat_a], pos[sat_b_intra]):
+                        bw = _sample_edge_bw(avg_src_bw * 50, rng, 0.8, 1.2)
+                        lat_ab = realistic_latency(pos[sat_a], pos[sat_b_intra], "satellite", "satellite")
+                        lat_ba = realistic_latency(pos[sat_b_intra], pos[sat_a], "satellite", "satellite")
+                        
+                        add_edge_with_cost(G, sat_a, sat_b_intra, lat_ab, bw)
+                        add_edge_with_cost(G, sat_b_intra, sat_a, lat_ba, bw)
                 
                 if num_planes_actual > 1:
                     adj_plane_id = sorted_plane_ids[(p_idx_key + 1) % num_planes_actual]
@@ -578,81 +474,52 @@ def generate_graph_sequence_realistic(
                     if k_idx < len(adj_plane_sats):
                         sat_b_inter = adj_plane_sats[k_idx]
                         if not G.has_edge(sat_a, sat_b_inter) and not is_earth_blocking(pos[sat_a], pos[sat_b_inter]):
-                            bw = _sample_edge_bw(avg_src_bw * 50, rng, 0.8, 1.2) # 使用變動 rng
+                            bw = _sample_edge_bw(avg_src_bw * 50, rng, 0.8, 1.2)
                             lat_ab = realistic_latency(pos[sat_a], pos[sat_b_inter], "satellite", "satellite")
                             lat_ba = realistic_latency(pos[sat_b_inter], pos[sat_a], "satellite", "satellite")
+                            
                             add_edge_with_cost(G, sat_a, sat_b_inter, lat_ab, bw)
                             add_edge_with_cost(G, sat_b_inter, sat_a, lat_ba, bw)
 
-        # Cloud -> Cloud
         for i in range(len(clouds)):
             for j in range(i + 1, len(clouds)):
                 a, b = clouds[i], clouds[j]
                 dist_km = euclid_latency(pos[a], pos[b])
                 if dist_km <= thr_cloud_to_cloud:
-                    bw = _sample_edge_bw(avg_src_bw * 10, rng, 0.8, 1.2) # 使用變動 rng
+                    bw = _sample_edge_bw(avg_src_bw * 10, rng, 0.8, 1.2)
                     lat_ab = realistic_latency(pos[a], pos[b], "cloud", "cloud")
                     lat_ba = realistic_latency(pos[b], pos[a], "cloud", "cloud")
                     add_edge_with_cost(G, a, b, lat_ab, bw)
                     add_edge_with_cost(G, b, a, lat_ba, bw)
 
-        # Src -> Cloud
         for s in srcs:
             for c in clouds:
                 dist_km = euclid_latency(pos[s], pos[c])
                 if dist_km <= thr_cloud_to_cloud:
-                    bw = _sample_edge_bw(avg_src_bw * 5, rng, 0.8, 1.2) # 使用變動 rng
+                    bw = _sample_edge_bw(avg_src_bw * 5, rng, 0.8, 1.2)
                     lat_sc = realistic_latency(pos[s], pos[c], "src", "cloud")
                     lat_cs = realistic_latency(pos[c], pos[s], "cloud", "src")
                     add_edge_with_cost(G, s, c, lat_sc, bw)
                     add_edge_with_cost(G, c, s, lat_cs, bw)
                     
         backbone_nodes = sats + clouds
-        
-        if not backbone_nodes and (len(srcs) > 0 or len(dests) > 0):
-            print(f"[t={t}] 警告: 圖中沒有任何 backbone 節點 (sats/clouds)。")
-        
-        elif backbone_nodes: 
+        if backbone_nodes:
             for s in srcs:
                 if G.out_degree(s) == 0:
-                    closest_bb_node = min(backbone_nodes, key=lambda n: euclid_latency(pos[s], pos[n]))
-                    bb_type = G.nodes[closest_bb_node]['type']
-                    
-                    bw = _sample_edge_bw(avg_src_bw * 5, rng, 0.8, 1.2)
-                    
-                    lat_s_bb = realistic_latency(pos[s], pos[closest_bb_node], "src", bb_type)
-                    lat_bb_s = realistic_latency(pos[closest_bb_node], pos[s], bb_type, "src")
-                    
-                    add_edge_with_cost(G, s, closest_bb_node, lat_s_bb, bw)
-                    add_edge_with_cost(G, closest_bb_node, s, lat_bb_s, bw)
+                    force_connect_ground(G, s, sats)
+                    if G.out_degree(s) == 0:
+                        closest = min(backbone_nodes, key=lambda n: euclid_latency(pos[s], pos[n]))
+                        add_edge_with_cost(G, s, closest, latency=1, bandwidth=1000, penalty_mult=10.0)
+                        add_edge_with_cost(G, closest, s, latency=1, bandwidth=1000, penalty_mult=10.0)
 
             for d in dests:
-                is_connected = False
-                for neighbor in G.successors(d):
-                    if neighbor in backbone_nodes:
-                        is_connected = True
-                        break
-                if is_connected: continue
-                
-                for neighbor in G.predecessors(d):
-                    if neighbor in backbone_nodes:
-                        is_connected = True
-                        break
-                if is_connected: continue
+                if G.out_degree(d) == 0 or G.in_degree(d) == 0:
+                     force_connect_ground(G, d, sats)
+                     if G.out_degree(d) == 0:
+                        closest = min(backbone_nodes, key=lambda n: euclid_latency(pos[d], pos[n]))
+                        add_edge_with_cost(G, d, closest, latency=1, bandwidth=1000, penalty_mult=10.0)
+                        add_edge_with_cost(G, closest, d, latency=1, bandwidth=1000, penalty_mult=10.0)
 
-                closest_bb_node = min(backbone_nodes, key=lambda n: euclid_latency(pos[d], pos[n]))
-                bb_type = G.nodes[closest_bb_node]['type']
-
-                bw = _sample_edge_bw(avg_src_bw * 5, rng, 0.8, 1.2)
-                
-                lat_d_bb = realistic_latency(pos[d], pos[closest_bb_node], "dest", bb_type)
-                lat_bb_d = realistic_latency(pos[closest_bb_node], pos[d], bb_type, "dest")
-                
-                add_edge_with_cost(G, d, closest_bb_node, lat_d_bb, bw)
-                add_edge_with_cost(G, closest_bb_node, d, lat_bb_d, bw)
-                
-        for g in srcs + dests + clouds:
-            force_connect_ground(G, g, sats)
         ensure_strongly_connected(G)
         graph_seq.append(G)
         
@@ -668,17 +535,12 @@ def main():
     with open(config_path, "r") as f:
         cfg = json.load(f)
 
-    if len(sys.argv) >= 3:
-        excel_path = sys.argv[2]
-    else:
-        excel_path = f"results_ns{cfg['n_sats']}_nc{cfg['n_clouds']}_nd{cfg['n_dests']}_p{cfg['num_planes']}_t{cfg['total_time']}.xlsx"
-
     dir_path = "output_graphs"
     os.makedirs(dir_path, exist_ok=True)
     txt_count = len([f for f in os.listdir(dir_path) if f.endswith(".txt")])
     
     graphs = generate_graph_sequence_realistic(
-        seed=txt_count + cfg["seed_offset"],
+        seed=cfg["seed_offset"],
         n_sats=cfg["n_sats"],
         n_clouds=cfg["n_clouds"],
         n_srcs=cfg["n_srcs"],
@@ -693,7 +555,6 @@ def main():
         region_dist_thr=cfg["region_dist_thr"]
     )
     
-    # --- 以下替換為簡單的日誌輸出 ---
     print(f"成功生成 {len(graphs)} 個時間步的圖形。")
     if graphs:
         G0 = graphs[0]
@@ -702,31 +563,17 @@ def main():
         print(f"邊總數: {G0.number_of_edges()}")
         
         n_sats = len([n for n, d in G0.nodes(data=True) if d['type'] == 'satellite'])
-        n_clouds = len([n for n, d in G0.nodes(data=True) if d['type'] == 'cloud'])
-        n_srcs = len([n for n, d in G0.nodes(data=True) if d['type'] == 'src'])
-        n_dests = len([n for n, d in G0.nodes(data=True) if d['type'] == 'dest'])
-        
         print(f"  - 衛星 (Satellites): {n_sats}")
-        print(f"  - 地面雲 (Clouds): {n_clouds}")
-        print(f"  - 源站 (Sources): {n_srcs}")
-        print(f"  - 目的地 (Destinations): {n_dests}")
         
-        isl_edges = len([
-            (u, v) for u, v, d in G0.edges(data=True) 
-            if G0.nodes[u]['type'] == 'satellite' and G0.nodes[v]['type'] == 'satellite'
-        ])
-        print(f"衛星間連線 (ISL) 總數: {isl_edges}")
-
-        gts_edges = len([
-            (u, v) for u, v, d in G0.edges(data=True) 
-            if G0.nodes[u]['type'] != 'satellite' and G0.nodes[v]['type'] == 'satellite'
-        ])
-        print(f"地對空連線 (Gnd-to-Sat) 總數: {gts_edges}")
-        print(nx.is_strongly_connected(G0), nx.is_connected(G0.to_undirected()))
+        is_strong = nx.is_strongly_connected(G0)
+        is_weak = nx.is_connected(G0.to_undirected())
+        print(f"Strongly Connected: {is_strong}")
+        print(f"Weakly Connected: {is_weak}")
+        
+        if not is_strong:
+            print("警告：圖形並非強連通，STARFRONT 可能會報錯。")
 
     save_graph_sequence_to_txt(graph_seq=graphs)
-    loaded_graph_seq = load_graph_sequence_from_txt(path="output_graphs", idx=txt_count + 1)
-    print(are_graphs_equal(graphs, loaded_graph_seq))
 
 if __name__ == "__main__":
     main()
