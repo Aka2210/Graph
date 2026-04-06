@@ -15,12 +15,19 @@ EARTH_RADIUS_KM = 6371.0
 MIN_ELEVATION_ANGLE = 30.0
 REMOTE_AREA_MIN_DIST_KM = 500.0
 
-def get_cost_traffic_by_distance(p1, p2, u_type, v_type, base_cost_per_km=0.001):
+def get_cost_traffic_by_distance(p1, p2, u_type, v_type, base_cost_per_km=0.01):
     dist_km = float(math.dist(p1, p2))
     dist_factor = (dist_km / 10.0)
 
     multiplier = 1.0
-    cost = dist_factor * base_cost_per_km * multiplier
+    if u_type == "satellite" and v_type == "satellite":
+        multiplier = 1.0 
+    elif "cloud" in (u_type, v_type) and "satellite" not in (u_type, v_type):
+        multiplier = 0.5 
+    elif "satellite" in (u_type, v_type):
+        multiplier = 1.2 
+    
+    cost = dist_factor * base_cost_per_km * multiplier 
     return max(cost, 1e-9)
 
 def add_edge_with_cost(G, u, v, latency, bandwidth, penalty_mult=1.0):
@@ -50,9 +57,9 @@ def realistic_latency(p1, p2, u_type, v_type, bin_size_ms=5.0):
     d = distance_km * 1000.0
     
     if u_type == "cloud" and v_type == "cloud":
-        speed = 2e8
+        speed = 2e8 
     else:
-        speed = 3e8
+        speed = 3e8 
         
     prop_delay = d / speed * 1000.0
     
@@ -135,12 +142,12 @@ def ensure_strongly_connected(G):
             add_edge_with_cost(G, u, v, latency=1, bandwidth=1000, penalty_mult=10.0)
             add_edge_with_cost(G, v, u, latency=1, bandwidth=1000, penalty_mult=10.0)
 
-def generate_walker_meta(num_sats_total=60, num_planes=6, altitude_km=550.0, inclination_deg=53.0, f_phasing_param=0, base_angular_velocity=0.05):
+def generate_walker_meta(num_sats_total=60, num_planes=6, altitude_km=550.0, inclination_deg=53.0, f_phasing_param=0, base_angular_velocity=0.2):
     radius_km = EARTH_RADIUS_KM + altitude_km
     inclination_rad = math.radians(inclination_deg)
     satellites_meta = []
     
-    FIXED_SLOT_SPACING_DEG = 360.0 / 20.0
+    FIXED_SLOT_SPACING_DEG = 360.0 / 20.0 
     
     for i in range(num_sats_total):
         p_idx = i % num_planes
@@ -149,7 +156,7 @@ def generate_walker_meta(num_sats_total=60, num_planes=6, altitude_km=550.0, inc
         raan_rad = math.radians(p_idx * (360.0 / num_planes))
         phase_in_plane = math.radians(k_idx * FIXED_SLOT_SPACING_DEG)
         
-        total_slots_theoretical = num_planes * (360.0 / FIXED_SLOT_SPACING_DEG)
+        total_slots_theoretical = num_planes * (360.0 / FIXED_SLOT_SPACING_DEG) 
         phase_offset = math.radians(f_phasing_param * (p_idx * 360.0 / total_slots_theoretical))
         
         phi0 = phase_in_plane + phase_offset
@@ -158,11 +165,11 @@ def generate_walker_meta(num_sats_total=60, num_planes=6, altitude_km=550.0, inc
             type="satellite",
             mobile=True,
             orbit=dict(
-                r=radius_km,
-                inc=inclination_rad,
-                raan=raan_rad,
+                r=radius_km, 
+                inc=inclination_rad, 
+                raan=raan_rad, 
                 w=base_angular_velocity,
-                orbit_id=p_idx,
+                orbit_id=p_idx, 
                 id_in_plane=k_idx
             ),
             phi0=phi0,
@@ -224,9 +231,9 @@ def generate_graph_sequence_realistic(
     rng = random.Random(seed)
     rng_node = random.Random(seed + 99991)
     np.random.seed(seed)
-    rng_src_pos = random.Random(1001)
-    rng_dest_pos = random.Random(2002)
-    rng_cloud_pos = random.Random(3003)
+    rng_src_pos = random.Random(1001)   
+    rng_dest_pos = random.Random(2002)  
+    rng_cloud_pos = random.Random(3003) 
 
     def _gen_random_sphere_pos(generator):
         lat_rad = math.radians(generator.uniform(-70, 70))
@@ -250,7 +257,7 @@ def generate_graph_sequence_realistic(
 
     def _gen_remote_centroid(generator, avoid_list, min_dist_km):
         while True:
-            lat_rad = math.radians(generator.uniform(0, 50))
+            lat_rad = math.radians(generator.uniform(0, 50)) 
             lon_rad = math.radians(generator.uniform(0, 120))
             x = EARTH_RADIUS_KM * np.cos(lat_rad) * np.cos(lon_rad)
             y = EARTH_RADIUS_KM * np.cos(lat_rad) * np.sin(lon_rad)
@@ -281,37 +288,22 @@ def generate_graph_sequence_realistic(
 
     fixed_cloud_coords = []
     for _ in range(n_clouds):
-        lat = math.radians(rng_cloud_pos.uniform(-20, 20))
-        lon = math.radians(rng_cloud_pos.uniform(-100, -80))
-        fixed_cloud_coords.append(_latlon_to_xyz(lat, lon))
+        fixed_cloud_coords.append(_gen_random_sphere_pos(rng_cloud_pos))
 
     fixed_src_coords = []
     for _ in range(n_srcs):
-        lat = math.radians(rng_src_pos.uniform(-5, 5))
-        lon = math.radians(rng_src_pos.uniform(-95, -85))
-        fixed_src_coords.append(_latlon_to_xyz(lat, lon))
-        
-    fixed_dest_coords = []
-    for i in range(n_dests):
-        base_lat = -50.0 + (100.0 / max(1, n_dests - 1)) * i
-        
-        lat_deg = base_lat + rng_dest_pos.uniform(-3, 3)
-        lon_deg = rng_dest_pos.uniform(90, 110)
-        
-        lat = math.radians(lat_deg)
-        lon = math.radians(lon_deg)
-        fixed_dest_coords.append(_latlon_to_xyz(lat, lon))
+        fixed_src_coords.append(_gen_random_sphere_pos(rng_src_pos))
 
     avoid_list = fixed_cloud_coords + fixed_src_coords
 
-    K = max(2, min(5, n_dests // 5))
+    K = max(2, min(5, n_dests // 5)) 
     fixed_dest_coords = _gen_remote_dest_clusters(
         generator=rng_dest_pos,
         avoid_list=avoid_list,
         n_dests=n_dests,
         min_dist_km=REMOTE_AREA_MIN_DIST_KM,
         K=K,
-        spread_km=1000.0,
+        spread_km=1000.0, 
     )
 
     src_iter = iter(fixed_src_coords)
@@ -464,7 +456,6 @@ def generate_graph_sequence_realistic(
                         bw = _sample_edge_bw(avg_src_bw * 50, rng, 0.8, 1.2)
                         lat_ab = realistic_latency(pos[sat_a], pos[sat_b_intra], "satellite", "satellite")
                         lat_ba = realistic_latency(pos[sat_b_intra], pos[sat_a], "satellite", "satellite")
-                        
                         add_edge_with_cost(G, sat_a, sat_b_intra, lat_ab, bw)
                         add_edge_with_cost(G, sat_b_intra, sat_a, lat_ba, bw)
                 
@@ -477,7 +468,6 @@ def generate_graph_sequence_realistic(
                             bw = _sample_edge_bw(avg_src_bw * 50, rng, 0.8, 1.2)
                             lat_ab = realistic_latency(pos[sat_a], pos[sat_b_inter], "satellite", "satellite")
                             lat_ba = realistic_latency(pos[sat_b_inter], pos[sat_a], "satellite", "satellite")
-                            
                             add_edge_with_cost(G, sat_a, sat_b_inter, lat_ab, bw)
                             add_edge_with_cost(G, sat_b_inter, sat_a, lat_ba, bw)
 
@@ -503,10 +493,10 @@ def generate_graph_sequence_realistic(
                     add_edge_with_cost(G, c, s, lat_cs, bw)
                     
         backbone_nodes = sats + clouds
-        if backbone_nodes:
+        if backbone_nodes: 
             for s in srcs:
                 if G.out_degree(s) == 0:
-                    force_connect_ground(G, s, sats)
+                    force_connect_ground(G, s, sats) 
                     if G.out_degree(s) == 0:
                         closest = min(backbone_nodes, key=lambda n: euclid_latency(pos[s], pos[n]))
                         add_edge_with_cost(G, s, closest, latency=1, bandwidth=1000, penalty_mult=10.0)
