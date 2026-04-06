@@ -11,7 +11,7 @@
     "altitude_km": 550.0,
     "inclination_deg": 53.0,
     "f_phasing_param": 1,
-    "base_angular_velocity": 0.105,
+    "base_angular_velocity": 0.2,
     "thr_cloud_to_cloud": 3200.0,
     "region_dist_thr": 1000.0,
 
