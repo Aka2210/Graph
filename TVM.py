@@ -252,60 +252,217 @@ def TSMTA(TIG: dict[tuple[int, int, int], nx.DiGraph], CTIG: dict[tuple[int, int
     print(f"[{i}] RSS = {mem_mb():.2f} MB")
     time.sleep(0.5)
     return T_i_t
-def BC(T_i_t: dict[tuple[int, int], nx.DiGraph], src_nodes: list[str], total_time: int):
-    total_cost = 0.0
-    for idx, si in enumerate(src_nodes):
-        for t in range(total_time):
-            size = T_i_t[(idx, t)].nodes[si].get("data_size", 0.0)
-            G = T_i_t.get((idx, t))
-            if G is None:
-                continue
-            for u, v, attrs in G.edges(data=True):
-                total_cost += attrs.get("cost_traffic", 0.0) * size
-    return total_cost 
-def CC(T_i_t: dict[tuple[int, int], nx.DiGraph], src_nodes: list[str], caches: list[str], total_time: int, alpha=1):
+
+def BC_multicast(T_i_t: dict[tuple[int, int], nx.DiGraph],
+                 src_nodes: list[str],
+                 total_time: int) -> float:
+    """
+    Bandwidth-like cost for multicast-tree baselines.
+    For each source/time graph, every edge in the tree is charged once
+    with the source content size.
+    """
     total_cost = 0.0
     for idx, si in enumerate(src_nodes):
         for t in range(total_time):
             G = T_i_t.get((idx, t))
-            if G is None:
+            if G is None or si not in G.nodes:
                 continue
-            size = G.nodes[si].get("data_size", 0.0)
+
+            size = float(G.nodes[si].get("data_size", 0.0))
+
+            for _, _, attrs in G.edges(data=True):
+                total_cost += float(attrs.get("cost_traffic", 0.0)) * size
+
+    return total_cost
+
+
+def CC_multicast(T_i_t: dict[tuple[int, int], nx.DiGraph],
+                 src_nodes: list[str],
+                 caches: list[str],
+                 total_time: int,
+                 alpha: float = 1.0) -> float:
+    """
+    Cache cost for multicast-tree baselines.
+    Only use this if your baseline definition really wants cache cost.
+    """
+    total_cost = 0.0
+    for idx, si in enumerate(src_nodes):
+        for t in range(total_time):
+            G = T_i_t.get((idx, t))
+            if G is None or si not in G.nodes:
+                continue
+
+            size = float(G.nodes[si].get("data_size", 0.0))
+
             for c in caches:
                 if c not in G.nodes:
                     continue
                 node_attr = G.nodes[c]
                 total_cost += Algorithm.cost_cache(node_attr, size, alpha)
+
     return total_cost
-def RC(T_i_t: dict[tuple[int, int], nx.DiGraph], src_nodes: list[str], total_time: int, beta=1):
-    total_cost = 0
-    for idx, si in enumerate(src_nodes):
+
+
+def RC_multicast(T_i_t: dict[tuple[int, int], nx.DiGraph],
+                 src_nodes: list[str],
+                 total_time: int,
+                 beta: float = 1.0) -> float:
+    """
+    Reconfiguration / handover-like cost for multicast-tree baselines.
+    Computed by edge symmetric difference between adjacent time slices.
+    """
+    total_cost = 0.0
+    for idx, _ in enumerate(src_nodes):
         for t in range(total_time - 1):
             G1 = T_i_t.get((idx, t))
             G2 = T_i_t.get((idx, t + 1))
+
+            if G1 is None or G2 is None:
+                continue
+
             edges1 = set(G1.edges())
             edges2 = set(G2.edges())
             total_cost += len(edges1.symmetric_difference(edges2))
+
     return total_cost * beta
+
+
+def evaluate_multicast_algorithm(name: str,
+                                 T_i_t: dict[tuple[int, int], nx.DiGraph],
+                                 src_nodes: list[str],
+                                 caches: list[str],
+                                 total_time: int,
+                                 alpha: float = 1.0,
+                                 beta: float = 10.0,
+                                 output: bool = True):
+    """
+    For DMTS / SSSP / TSMTA.
+    """
+    bc = BC_multicast(T_i_t, src_nodes, total_time)
+
+    # 依你原本邏輯：DMTS / SSSP 不算 cache cost
+    if name in ("DMTS", "SSSP"):
+        cc = 0.0
+    else:
+        cc = CC_multicast(T_i_t, src_nodes, caches, total_time, alpha)
+
+    rc = RC_multicast(T_i_t, src_nodes, total_time, beta)
+    total = bc + cc + rc
+
+    if output:
+        print(f"[{name}] BC={bc:.2f}, CC={cc:.2f}, RC={rc:.2f}, Total={total:.2f}")
+
+    return bc, cc, rc, total
+
+
+# =========================================================
+# OffPA / STARFRONT
+# =========================================================
+
+def RC_offpa_from_graph_diff(T_i_t: dict[tuple[int, int], nx.DiGraph],
+                             beta: float = 10.0) -> float:
+    """
+    Surrogate RC for OffPA:
+    use edge symmetric difference between adjacent time slots.
+
+    Note:
+    This is NOT OffPA's original cost definition.
+    It is a post-hoc reconfiguration metric for presentation consistency.
+    """
+    if not isinstance(T_i_t, dict):
+        raise TypeError("For OffPA, result must be T_i_t: dict[(idx,t)] -> nx.DiGraph.")
+
+    total_cost = 0.0
+
+    # 先把同一個 src_idx 的時間序列整理出來
+    src_groups: dict[int, list[tuple[int, nx.DiGraph]]] = {}
+    for (src_idx, t), DG in T_i_t.items():
+        src_groups.setdefault(src_idx, []).append((t, DG))
+
+    for src_idx, seq in src_groups.items():
+        seq.sort(key=lambda x: x[0])  # sort by time
+
+        for i in range(len(seq) - 1):
+            _, G1 = seq[i]
+            _, G2 = seq[i + 1]
+
+            edges1 = set(G1.edges())
+            edges2 = set(G2.edges())
+
+            total_cost += len(edges1.symmetric_difference(edges2))
+
+    return total_cost * beta
+
+
+def evaluate_offpa(T_i_t: dict[tuple[int, int], nx.DiGraph],
+                   beta: float = 10.0,
+                   output: bool = True):
+    """
+    Hard-split OffPA into BC / RC / CC for presentation consistency.
+
+    Mapping:
+        BC = CT_dist + CT_access
+        CC = CT_storage
+        RC = graph-difference-based surrogate reconfiguration cost
+    """
+    if not isinstance(T_i_t, dict):
+        raise TypeError("For OffPA, result must be T_i_t: dict[(idx,t)] -> nx.DiGraph.")
+
+    ct_dist = 0.0
+    ct_access = 0.0
+    ct_storage = 0.0
+
+    for key, DG in T_i_t.items():
+        if not isinstance(DG, nx.DiGraph):
+            raise TypeError(f"OffPA T_i_t[{key}] is not an nx.DiGraph.")
+
+        ct_dist += float(DG.graph.get("CT_dist", 0.0))
+        ct_access += float(DG.graph.get("CT_access", 0.0))
+        ct_storage += float(DG.graph.get("CT_storage", 0.0))
+
+    bc = ct_dist + ct_access
+    cc = ct_storage
+    rc = RC_offpa_from_graph_diff(T_i_t, beta=beta)
+    total = bc + cc + rc
+
+    if output:
+        print(f"[OffPA] BC={bc:.2f}, CC={cc:.2f}, RC={rc:.2f}, Total={total:.2f}")
+        print(
+            f"        (CT_dist={ct_dist:.2f}, "
+            f"CT_access={ct_access:.2f}, "
+            f"CT_storage={ct_storage:.2f}, "
+            f"RC_surrogate={rc:.2f})"
+        )
+
+    return bc, cc, rc, total
+
+
 def evaluate_algorithm(name: str,
-                       T_i_t: dict[tuple[int, int], nx.DiGraph],
+                       result,
                        src_nodes: list[str],
                        caches: list[str],
                        total_time: int,
-                       alpha: float = 1,
-                       beta: float = 1, 
+                       alpha: float = 1.0,
+                       beta: float = 100.0,
                        output: bool = True):
-    bc = 0
-    cc = 0
-    rc = 0
-    bc = BC(T_i_t, src_nodes, total_time)
-    if name != "DMTS" and name != "SSSP":
-        cc = CC(T_i_t, src_nodes, caches, total_time, alpha)
-    rc = RC(T_i_t, src_nodes, total_time, beta)
-    total = bc + cc + rc
-    if output:
-        print(f"[{name}] BC={bc:.2f}, CC={cc:.2f}, RC={rc:.2f}, Total={total:.2f}")
-    return bc, cc, rc, total
+
+    if name == "OffPA":
+        return evaluate_offpa(result, beta=beta, output=output)
+
+    if not isinstance(result, dict):
+        raise TypeError(f"For {name}, result must be T_i_t: dict[(idx,t)] -> nx.DiGraph.")
+
+    return evaluate_multicast_algorithm(
+        name=name,
+        T_i_t=result,
+        src_nodes=src_nodes,
+        caches=caches,
+        total_time=total_time,
+        alpha=alpha,
+        beta=beta,
+        output=output
+    )
+
 def Optimal(T_i_t: dict[tuple[int, int], nx.DiGraph], srcs: list[str], caches: list[str], TIG_Interval: dict[tuple[int, int, int], nx.DiGraph], total_time: int, candidates_amount: int):
     print("Start Optimal")
     intervals: dict[int, list[tuple[int, int]]] = {}
@@ -399,3 +556,7 @@ def Optimal(T_i_t: dict[tuple[int, int], nx.DiGraph], srcs: list[str], caches: l
             if min_val < total:
                 for t in range(l_ch, r_ch + 1):
                     T_i_t[(idx, t)] = new_T_i_t
+
+# 參考楊德年教授論文寫法加上各參數的參考與設定
+# 圖片數字與文字增大, 兩兩一排
+# 嘗試1~100各beta值的圖

@@ -336,7 +336,7 @@ def generate_graph_sequence_realistic(
             meta["bandwidth"] = 0
 
             meta["storage_model"] = "concave"
-            meta["d"] = round(rng_node.uniform(0.005, 0.012), 5)      
+            meta["d"] = round(rng_node.uniform(5, 12), 5)      
             meta["z"] = 0.8
             meta["gamma"] = 1.5                                      
             meta["cache"] = (rng_node.random() < 0.6)                
@@ -347,7 +347,7 @@ def generate_graph_sequence_realistic(
         elif n_type in ("src", "dest", "cloud"):
             if n_type == "src":
                 pos0 = next(src_iter)
-                bw = rng_node.randint(15, 25)
+                bw = rng_node.randint(3, 5)
             elif n_type == "dest":
                 pos0 = next(dest_iter)
                 bw = 0
@@ -369,7 +369,7 @@ def generate_graph_sequence_realistic(
 
             elif n_type == "cloud":
                 meta["storage_model"] = "linear"
-                meta["d"] = round(rng_node.uniform(0.003, 0.008), 5)
+                meta["d"] = round(rng_node.uniform(15, 40), 5)
                 meta["z"] = 1.0
                 meta["gamma"] = 1.0
                 meta["cache"] = True

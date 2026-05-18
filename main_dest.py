@@ -122,7 +122,7 @@ def main():
     os.makedirs(dir_path, exist_ok=True)
     
     # --- 實驗設定 ---
-    NUM_RUNS = 1
+    NUM_RUNS = 10
     BASE_SEED = 42
     
     algo_names = ["DMTS", "OffPA", "SSSP", "TSMTA"]
