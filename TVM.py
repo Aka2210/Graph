@@ -275,6 +275,39 @@ def BC_multicast(T_i_t: dict[tuple[int, int], nx.DiGraph],
 
     return total_cost
 
+def BC_multicast_cache_aware(T_i_t, src_nodes, caches, total_time, cache_hit_factor=0.3):
+    total_cost = 0.0
+
+    for idx, si in enumerate(src_nodes):
+        for t in range(total_time):
+            G = T_i_t.get((idx, t))
+            if G is None or si not in G.nodes:
+                continue
+
+            size = float(G.nodes[si].get("data_size", 1.0))
+
+            stack = [(si, False)]
+            visited = set()
+
+            while stack:
+                u, passed_cache = stack.pop()
+                if (u, passed_cache) in visited:
+                    continue
+                visited.add((u, passed_cache))
+
+                for v in G.successors(u):
+                    edge_cost = float(G[u][v].get("cost_traffic", 0.0)) * size
+
+                    next_passed_cache = passed_cache or (v in caches)
+
+                    if passed_cache:
+                        edge_cost *= cache_hit_factor
+
+                    total_cost += edge_cost
+                    stack.append((v, next_passed_cache))
+
+    return total_cost
+
 
 def CC_multicast(T_i_t: dict[tuple[int, int], nx.DiGraph],
                  src_nodes: list[str],
@@ -303,15 +336,17 @@ def CC_multicast(T_i_t: dict[tuple[int, int], nx.DiGraph],
     return total_cost
 
 
-def RC_multicast(T_i_t: dict[tuple[int, int], nx.DiGraph],
-                 src_nodes: list[str],
-                 total_time: int,
-                 beta: float = 1.0) -> float:
+def RC_multicast(T_i_t, src_nodes, total_time, beta=1.0):
     """
     Reconfiguration / handover-like cost for multicast-tree baselines.
-    Computed by edge symmetric difference between adjacent time slices.
+
+    Normalized version:
+    use the average number of changed edges between consecutive time slices,
+    instead of summing all transitions directly.
     """
     total_cost = 0.0
+    transition_count = 0
+
     for idx, _ in enumerate(src_nodes):
         for t in range(total_time - 1):
             G1 = T_i_t.get((idx, t))
@@ -322,9 +357,12 @@ def RC_multicast(T_i_t: dict[tuple[int, int], nx.DiGraph],
 
             edges1 = set(G1.edges())
             edges2 = set(G2.edges())
-            total_cost += len(edges1.symmetric_difference(edges2))
 
-    return total_cost * beta
+            total_cost += len(edges1.symmetric_difference(edges2))
+            transition_count += 1
+
+    avg_rc = total_cost / max(transition_count, 1)
+    return avg_rc * beta
 
 
 def evaluate_multicast_algorithm(name: str,
@@ -338,17 +376,27 @@ def evaluate_multicast_algorithm(name: str,
     """
     For DMTS / SSSP / TSMTA.
     """
-    bc = BC_multicast(T_i_t, src_nodes, total_time)
+    if name == "TSMTA":
+        bc = BC_multicast_cache_aware(
+            T_i_t,
+            src_nodes,
+            caches,
+            total_time,
+            cache_hit_factor=0.3
+        )
+        cc = CC_multicast(T_i_t, src_nodes, caches, total_time, alpha)
 
-    # 依你原本邏輯：DMTS / SSSP 不算 cache cost
-    if name in ("DMTS", "SSSP"):
+    elif name in ("DMTS", "SSSP"):
+        bc = BC_multicast(T_i_t, src_nodes, total_time)
         cc = 0.0
+
     else:
+        bc = BC_multicast(T_i_t, src_nodes, total_time)
         cc = CC_multicast(T_i_t, src_nodes, caches, total_time, alpha)
 
     rc = RC_multicast(T_i_t, src_nodes, total_time, beta)
     total = bc + cc + rc
-
+    
     if output:
         print(f"[{name}] BC={bc:.2f}, CC={cc:.2f}, RC={rc:.2f}, Total={total:.2f}")
 

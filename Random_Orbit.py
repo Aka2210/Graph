@@ -15,7 +15,7 @@ EARTH_RADIUS_KM = 6371.0
 MIN_ELEVATION_ANGLE = 30.0
 REMOTE_AREA_MIN_DIST_KM = 500.0
 
-def get_cost_traffic_by_distance(p1, p2, u_type, v_type, base_cost_per_km=0.01):
+def get_cost_traffic_by_distance(p1, p2, u_type, v_type, base_cost_per_km=0.001):
     dist_km = float(math.dist(p1, p2))
     dist_factor = (dist_km / 10.0)
 
@@ -336,7 +336,7 @@ def generate_graph_sequence_realistic(
             meta["bandwidth"] = 0
 
             meta["storage_model"] = "concave"
-            meta["d"] = round(rng_node.uniform(5, 12), 5)      
+            meta["d"] = round(rng_node.uniform(0.5, 1.5), 5)
             meta["z"] = 0.8
             meta["gamma"] = 1.5                                      
             meta["cache"] = (rng_node.random() < 0.6)                
@@ -369,7 +369,7 @@ def generate_graph_sequence_realistic(
 
             elif n_type == "cloud":
                 meta["storage_model"] = "linear"
-                meta["d"] = round(rng_node.uniform(15, 40), 5)
+                meta["d"] = round(rng_node.uniform(1.0, 3.0), 5)
                 meta["z"] = 1.0
                 meta["gamma"] = 1.0
                 meta["cache"] = True
