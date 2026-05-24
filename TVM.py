@@ -463,7 +463,15 @@ def evaluate_algorithm(name: str,
         output=output
     )
 
-def Optimal(T_i_t: dict[tuple[int, int], nx.DiGraph], srcs: list[str], caches: list[str], TIG_Interval: dict[tuple[int, int, int], nx.DiGraph], total_time: int, candidates_amount: int):
+def Optimal(
+    T_i_t: dict[tuple[int, int], nx.DiGraph],
+    srcs: list[str],
+    caches: list[str],
+    TIG_Interval: dict[tuple[int, int, int], nx.DiGraph],
+    total_time: int,
+    candidates_amount: int,
+    node_attr_map=None,
+):
     print("Start Optimal")
     intervals: dict[int, list[tuple[int, int]]] = {}
     G: nx.DiGraph
@@ -527,7 +535,7 @@ def Optimal(T_i_t: dict[tuple[int, int], nx.DiGraph], srcs: list[str], caches: l
                 continue
             cache = {}
             bc, cc, rc, total = evaluate_algorithm("TSMTA", T_i_t, srcs, caches, total_time, output=False)
-            cache[t1] = T_i_t[(idx, t1)].copy()
+            cache[t1] = T_i_t[(idx, t1)].copy(as_view=False)
             new_T_i_t = T_i_t[(idx, t1)].copy()
             if new_T_i_t.has_edge(path[-2], path[-1]):
                 new_T_i_t.remove_edge(path[-2], path[-1])
@@ -541,21 +549,25 @@ def Optimal(T_i_t: dict[tuple[int, int], nx.DiGraph], srcs: list[str], caches: l
                         f"❌ Edge ({u}->{v}) not found in TIG_Interval[{idx}, {t1}, {t1}]"
                     )
             new_T_i_t = Algorithm.shortest_path_tree(new_T_i_t, si, weight=TVM.WEIGHT.value)
+            if node_attr_map is not None:
+                for n in list(new_T_i_t.nodes()):
+                    if n in node_attr_map:
+                        new_T_i_t.nodes[n].update(node_attr_map[n])
             min_val = total
             l_ch, r_ch = -1, 0
             for t_l in range(t1, t2 + 1):
                 for t_r in range(t_l, t2 + 1):
-                    T_i_t[(idx, t_r)] = new_T_i_t
+                    T_i_t[(idx, t_r)] = new_T_i_t.copy()
                     bc, cc, rc, val = evaluate_algorithm("TSMTA", T_i_t, srcs, caches, total_time, output=False)
                     if val < min_val:
                         min_val = val
                         l_ch = t_l
                         r_ch = t_r
                 for t_r in range(t_l, t2 + 1):
-                    T_i_t[(idx, t_r)] = cache[t1]
+                    T_i_t[(idx, t_r)] = cache[t1].copy(as_view=False)
             if min_val < total:
                 for t in range(l_ch, r_ch + 1):
-                    T_i_t[(idx, t)] = new_T_i_t
+                    T_i_t[(idx, t)] = new_T_i_t.copy(as_view=False)
 
 # 參考楊德年教授論文寫法加上各參數的參考與設定
 # 圖片數字與文字增大, 兩兩一排

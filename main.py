@@ -122,7 +122,7 @@ def main():
     os.makedirs(dir_path, exist_ok=True)
     
     # --- 實驗設定 ---
-    NUM_RUNS = 10
+    NUM_RUNS = 1
     BASE_SEED = 42
     
     algo_names = ["DMTS", "OffPA", "SSSP", "TSMTA"]
@@ -202,11 +202,39 @@ def main():
         algo_results["SSSP"]["Total"].append(total)
 
         # --- TSMTA ---
-        T_TSMTA, TIG, TIG_Edges_Map = Execute_TSMTA(graphs, src_nodes, caches, dest_nodes, node_attr_map, time_slots)
-        TVM.Optimal(T_TSMTA, src_nodes, caches, TIG, time_slots, 100)
-        TVM.expand_virtual_edges(T_i_t=T_TSMTA, TIG_Interval=TIG, TIG_Edges_Map=TIG_Edges_Map, srcs=src_nodes, caches=caches, total_time=time_slots)
-        
-        bc, cc, rc, total = TVM.evaluate_algorithm("TSMTA", T_TSMTA, src_nodes, caches, time_slots)
+        T_TSMTA, TIG, TIG_Edges_Map = Execute_TSMTA(
+            graphs, src_nodes, caches, dest_nodes, node_attr_map, time_slots
+        )
+
+        TVM.Optimal(
+            T_TSMTA,
+            src_nodes,
+            caches,
+            TIG,
+            time_slots,
+            100,
+            node_attr_map=node_attr_map
+        )
+
+        TVM.expand_virtual_edges(
+            T_i_t=T_TSMTA,
+            TIG_Interval=TIG,
+            TIG_Edges_Map=TIG_Edges_Map,
+            srcs=src_nodes,
+            caches=caches,
+            total_time=time_slots
+        )
+
+        bc, cc, rc, total = TVM.evaluate_algorithm(
+            "TSMTA", T_TSMTA, src_nodes, caches, time_slots
+        )
+
+        print(
+            f"[RAW TSMTA] n_sats={cfg['n_sats']} "
+            f"seed={current_seed} "
+            f"BC={bc:.2f}, CC={cc:.2f}, RC={rc:.2f}, Total={total:.2f}"
+        )
+
         algo_results["TSMTA"]["BC"].append(bc)
         algo_results["TSMTA"]["CC"].append(cc)
         algo_results["TSMTA"]["RC"].append(rc)
