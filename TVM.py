@@ -8,7 +8,6 @@ import heapq
 import psutil
 import Algorithm
 import PDTA
-import main
 from collections import OrderedDict
 class LRUCache(OrderedDict):
     """
@@ -31,8 +30,6 @@ INF = float("inf")
 class TVM(Enum):
     WEIGHT = "cost_traffic"
     USER = "dest"
-    BETA = 1
-    ALPHA = 1
 def TIG_CTIG(G_sequence: list[nx.DiGraph], srcs: list[str], caches: list[str]):
     T = len(G_sequence)
     E_sets = [set(G.edges()) for G in G_sequence]
@@ -140,9 +137,18 @@ def expand_virtual_edges(T_i_t: dict[tuple[int, int], nx.DiGraph], TIG_Interval:
                         raise KeyError(
                             f"❌ Edge ({x} -> {y}) not found in TIG_Interval[{idx}, {t}, {t}]"
                         )
-def TSMTA(TIG: dict[tuple[int, int, int], nx.DiGraph], CTIG: dict[tuple[int, int, int], nx.DiGraph]
-          , TIG_Edges_Map: dict[tuple[int, int], dict[str, list[str]]], CTIG_Edges_Map: dict[tuple[int, int, int], dict[str, list[str]]]
-          , srcs: list[str], caches: list[str], dests: dict[tuple[int, int, int], set[str]], total_time:int, node_attr_map: dict=None):
+def TSMTA(
+    TIG: dict[tuple[int, int, int], nx.DiGraph],
+    CTIG: dict[tuple[int, int, int], nx.DiGraph],
+    TIG_Edges_Map: dict[tuple[int, int], dict[str, list[str]]],
+    CTIG_Edges_Map: dict[tuple[int, int, int], dict[str, list[str]]],
+    srcs: list[str],
+    caches: list[str],
+    dests: dict[tuple[int, int, int], set[str]],
+    total_time: int,
+    node_attr_map: dict = None,
+    pdta_level: int = 2,
+):
     p = psutil.Process(os.getpid())
     def mem_mb():
         return p.memory_info().rss / 1024 / 1024
@@ -171,7 +177,7 @@ def TSMTA(TIG: dict[tuple[int, int, int], nx.DiGraph], CTIG: dict[tuple[int, int
                     dcount = len(local_dests)
                     G = CTIG_Interval[(idx, i, j)]
                     sig = Algorithm.graph_signature(G)
-                    cache_key = (sig, si, dcount)
+                    cache_key = (pdta_level, sig, si, dcount)
                     t0 = time.time()
                     if cache_key in PDTA_cache:
                         cache_hits += 1
@@ -180,7 +186,7 @@ def TSMTA(TIG: dict[tuple[int, int, int], nx.DiGraph], CTIG: dict[tuple[int, int
                         time_cache += time.time() - t0
                     else:
                         pdta_calls += 1
-                        tmp_k, tmp_min, records = PDTA.PDTA(2, si, dcount, local_dests, G)
+                        tmp_k, tmp_min, records = PDTA.PDTA(pdta_level, si, dcount, local_dests, G)
                         time_pdta += time.time() - t0
                         PDTA_cache[cache_key] = (tmp_k, tmp_min, records)
                     if tmp_min < T_Density_min:
@@ -196,7 +202,7 @@ def TSMTA(TIG: dict[tuple[int, int, int], nx.DiGraph], CTIG: dict[tuple[int, int
                     for k in range(1, len(local_dests)):
                         if k > total_dests:
                             break
-                        cache_key = (sig, si, k)
+                        cache_key = (pdta_level, sig, si, k)
                         t0 = time.time()
                         if cache_key in Choosing_cache:
                             cache_hits += 1
@@ -371,7 +377,7 @@ def evaluate_multicast_algorithm(name: str,
                                  caches: list[str],
                                  total_time: int,
                                  alpha: float = 1.0,
-                                 beta: float = 10.0,
+                                 beta: float = 50.0,
                                  output: bool = True):
     """
     For DMTS / SSSP / TSMTA.
@@ -519,42 +525,59 @@ def Optimal(
     total_time: int,
     candidates_amount: int,
     node_attr_map=None,
+    beta: float = 100.0,
 ):
     print("Start Optimal")
+
     intervals: dict[int, list[tuple[int, int]]] = {}
     G: nx.DiGraph
+
     for idx, si in enumerate(srcs):
         start = 0
         G = T_i_t[(idx, start)]
         intervals[idx] = []
+
         for j in range(total_time):
             if not Algorithm.are_graphs_equal(G, T_i_t[(idx, j)]):
                 intervals[idx].append((start, j - 1))
                 start = j
                 G = T_i_t[(idx, start)]
+
         intervals[idx].append((start, total_time - 1))
-    dists: dict
+
     for idx, si in enumerate(srcs):
         RCL: list = []
         iv_list = intervals[idx]
+
         for j, (t1, t2) in enumerate(iv_list):
             interval_graph = T_i_t[(idx, t1)]
-            base_pack, base_path = Algorithm.dijkstra_min_edges(interval_graph, si, weight=TVM.WEIGHT.value)
+            base_pack, base_path = Algorithm.dijkstra_min_edges(
+                interval_graph,
+                si,
+                weight=TVM.WEIGHT.value,
+            )
             base_dists = {v: cost for v, (cost, _) in base_pack.items()}
-            dest_nodes = {n for n, d in interval_graph.nodes(data=True) if d.get("type") == "dest"}
+            dest_nodes = {
+                n for n, d in interval_graph.nodes(data=True)
+                if d.get("type") == "dest"
+            }
+
             TIG_list = []
             G_cur = TIG_Interval[(idx, t1, t2)].copy()
             TIG_list.append(G_cur)
+
             if j > 0:
                 t1_prev = iv_list[j - 1][0]
                 G_prev = TIG_Interval.get((idx, t1_prev, t2))
                 if G_prev is not None:
                     TIG_list.append(G_prev.copy())
+
             if j + 1 < len(iv_list):
                 t2_next = iv_list[j + 1][1]
                 G_next = TIG_Interval.get((idx, t1, t2_next))
                 if G_next is not None:
                     TIG_list.append(G_next.copy())
+
             for TIG_t1_t2 in TIG_list:
                 for d in dest_nodes:
                     pd = base_path.get(d)
@@ -562,32 +585,65 @@ def Optimal(
                         u, v = pd[-2], pd[-1]
                         if TIG_t1_t2.has_edge(u, v):
                             TIG_t1_t2.remove_edge(u, v)
-                new_pack, new_path = Algorithm.dijkstra_min_edges(TIG_t1_t2, si, weight=TVM.WEIGHT.value)
+
+                new_pack, new_path = Algorithm.dijkstra_min_edges(
+                    TIG_t1_t2,
+                    si,
+                    weight=TVM.WEIGHT.value,
+                )
                 new_dists = {v: cost for v, (cost, _) in new_pack.items()}
+
                 for d in dest_nodes:
                     if d in base_dists and d in new_dists:
                         delta = new_dists[d] - base_dists[d]
-                        RCL.append((delta, base_path.get(d), new_path.get(d), (t1, t2)))
+                        RCL.append(
+                            (
+                                delta,
+                                base_path.get(d),
+                                new_path.get(d),
+                                (t1, t2),
+                            )
+                        )
+
         RCL_sorted = sorted(
             RCL,
             key=lambda x: (
-                round(x[0], 12),                
-                tuple(map(str, x[1] or ())),    
-                tuple(map(str, x[2] or ())),    
-                x[3]  
-            )
-        )                                                                                                
+                round(x[0], 12),
+                tuple(map(str, x[1] or ())),
+                tuple(map(str, x[2] or ())),
+                x[3],
+            ),
+        )
+
         for i in range(min(candidates_amount, len(RCL_sorted))):
             dist, path, new_path, (t1, t2) = RCL_sorted[i]
-            if not new_path:
+
+            if not path or len(path) < 2:
                 continue
+            if not new_path or len(new_path) < 2:
+                continue
+
             cache = {}
-            bc, cc, rc, total = evaluate_algorithm("TSMTA", T_i_t, srcs, caches, total_time, output=False)
+
+            # 重要：Optimal 的比較目標也要使用外面傳進來的 beta
+            bc, cc, rc, total = evaluate_algorithm(
+                "TSMTA",
+                T_i_t,
+                srcs,
+                caches,
+                total_time,
+                beta=beta,
+                output=False,
+            )
+
             cache[t1] = T_i_t[(idx, t1)].copy(as_view=False)
             new_T_i_t = T_i_t[(idx, t1)].copy()
+
             if new_T_i_t.has_edge(path[-2], path[-1]):
                 new_T_i_t.remove_edge(path[-2], path[-1])
+
             add_edges = list(zip(new_path[:-1], new_path[1:]))
+
             for u, v in add_edges:
                 if TIG_Interval[(idx, t1, t1)].has_edge(u, v):
                     edge_attr = TIG_Interval[(idx, t1, t1)][u][v]
@@ -596,27 +652,44 @@ def Optimal(
                     raise KeyError(
                         f"❌ Edge ({u}->{v}) not found in TIG_Interval[{idx}, {t1}, {t1}]"
                     )
-            new_T_i_t = Algorithm.shortest_path_tree(new_T_i_t, si, weight=TVM.WEIGHT.value)
+
+            new_T_i_t = Algorithm.shortest_path_tree(
+                new_T_i_t,
+                si,
+                weight=TVM.WEIGHT.value,
+            )
+
             if node_attr_map is not None:
                 for n in list(new_T_i_t.nodes()):
                     if n in node_attr_map:
                         new_T_i_t.nodes[n].update(node_attr_map[n])
+
             min_val = total
             l_ch, r_ch = -1, 0
+
             for t_l in range(t1, t2 + 1):
                 for t_r in range(t_l, t2 + 1):
                     T_i_t[(idx, t_r)] = new_T_i_t.copy()
-                    bc, cc, rc, val = evaluate_algorithm("TSMTA", T_i_t, srcs, caches, total_time, output=False)
+
+                    # 重要：這裡也要使用同一個 beta
+                    bc, cc, rc, val = evaluate_algorithm(
+                        "TSMTA",
+                        T_i_t,
+                        srcs,
+                        caches,
+                        total_time,
+                        beta=beta,
+                        output=False,
+                    )
+
                     if val < min_val:
                         min_val = val
                         l_ch = t_l
                         r_ch = t_r
+
                 for t_r in range(t_l, t2 + 1):
                     T_i_t[(idx, t_r)] = cache[t1].copy(as_view=False)
+
             if min_val < total:
                 for t in range(l_ch, r_ch + 1):
                     T_i_t[(idx, t)] = new_T_i_t.copy(as_view=False)
-
-# 參考楊德年教授論文寫法加上各參數的參考與設定
-# 圖片數字與文字增大, 兩兩一排
-# 嘗試1~100各beta值的圖

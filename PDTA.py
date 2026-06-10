@@ -92,11 +92,25 @@ def PDTA(level: int, r: str, m: int, terminals: Set[str], G: nx.DiGraph):
             key=lambda x: x[2]["cost_traffic"],
             reverse=False
         )
-        
+
         T_return.add_node(r, **G.nodes[r])
+
         for u, v, d in edges_sorted:
+            if len([n for n, attr in T_return.nodes(data=True) if attr.get("type") == "dest"]) >= m:
+                break
             T_return.add_node(v, **G.nodes[v])
             T_return.add_edge(u, v, **d)
+
+        d_T_min_return = PDTA_Density(T_return, 1, terminals)
+
+        D_min = {
+            n for n in T_return.nodes
+            if G.nodes[n].get("type") == "dest"
+        }
+
+        if D_min:
+            T_record[(d_T_min_return, len(D_min))] = T_return
+
         return T_return, d_T_min_return, T_record
         
     D_current = set()

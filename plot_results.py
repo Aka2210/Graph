@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 import sys
 import os
+import re
 import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 
-# ===== 全域字體設定：只放大字體，其餘大小不變 =====
+# Existing modes:
+#   python plot_results_beta.py results_ns300_nc20_nd50_p72_t10_avg_std.xlsx --x sats --break-ratio 1
+#   python plot_results_beta.py results_ns300_nc20_nd50_p72_t10_avg_std.xlsx --x dests --break-ratio 1
+#
+# New beta mode: fixed satellites or fixed destinations, x-axis = beta
+#   python plot_results_beta.py sats_beta_*.xlsx  --x beta --fixed-type sats  --fixed 300 --break-ratio 1
+#   python plot_results_beta.py dests_beta_*.xlsx --x beta --fixed-type dests --fixed 50  --break-ratio 1
+
+# ===== Global font settings =====
 plt.rcParams.update({
     "font.size": 25,
     "axes.titlesize": 30,
@@ -24,19 +33,18 @@ plt.rcParams.update({
     "ps.fonttype": 42
 })
 
-# ===== 只要改這幾個參數即可 =====
+# ===== Default x-axis range for original sats/dests mode =====
 X_START = 50
 X_END = 450
 X_STEP = 100
 
-# OffPA 至少比其他三個方法大幾倍，才使用 broken y-axis
+# OffPA must be this many times larger than other methods to use broken y-axis
 BREAK_RATIO = 5.0
 
-# ===== 圖片輸出設定 =====
+# ===== Figure output settings =====
 FIG_WIDTH = 8.8
 FIG_HEIGHT = 6.8
 PNG_DPI = 600
-
 
 STYLES = {
     "DMTS": {
@@ -83,17 +91,121 @@ def get_x_config(x_type):
             "x_label": "Number of Destinations"
         }
 
-    raise ValueError("x_type must be either 'sats' or 'dests'.")
+    if x_type == "beta":
+        return {
+            "x_col": "beta_pos",
+            "x_label": "Beta (β)"
+        }
+
+    raise ValueError("x_type must be 'sats', 'dests', or 'beta'.")
 
 
-def collect_plot_data(df, metric, x_col, x_start, x_end, x_step):
+def format_number_label(value):
+    """Format 1.0 as '1', but keep non-integers such as 0.5."""
+    try:
+        value_float = float(value)
+        if value_float.is_integer():
+            return str(int(value_float))
+        return str(value_float)
+    except Exception:
+        return str(value)
+
+
+def extract_beta_from_path(path):
+    """
+    Extract beta value from names like:
+        sats_beta_1.xlsx, dests_beta_10.xlsx, xxx_beta_50_avg.xlsx
+    """
+    basename = os.path.basename(path)
+    match = re.search(r"beta_([0-9]+(?:\.[0-9]+)?)", basename)
+    if not match:
+        raise ValueError(f"Cannot extract beta from filename: {basename}")
+    return float(match.group(1))
+
+
+def infer_fixed_type_from_paths(paths):
+    basenames = [os.path.basename(p).lower() for p in paths]
+    if all(name.startswith("sats_") for name in basenames):
+        return "sats"
+    if all(name.startswith("dests_") for name in basenames):
+        return "dests"
+    return None
+
+
+def parse_graph_num(df, output_col):
+    """
+    Parse graph count from graph column.
+    Supports graph_50, graph_50_avg1, graph_300_avg_std, etc.
+    """
+    extracted = df["graph"].astype(str).str.extract(r"graph_(\d+)")[0]
+    if extracted.isna().any():
+        bad_values = df.loc[extracted.isna(), "graph"].head(5).tolist()
+        raise ValueError(f"Cannot parse graph number from graph values: {bad_values}")
+    df[output_col] = extracted.astype(int)
+    return df
+
+
+def load_single_excel_for_original_mode(excel_path, x_col):
+    df = pd.read_excel(excel_path)
+    df = parse_graph_num(df, x_col)
+    return df
+
+
+def load_beta_excels(excel_paths, fixed_type, fixed_value):
+    """
+    New beta mode:
+      - Read multiple beta files.
+      - Extract beta from filename.
+      - Extract graph number from graph column.
+      - Keep only rows where graph number == fixed_value.
+      - Map beta values to equally spaced categorical x positions.
+    """
+    fixed_col = "sat_num" if fixed_type == "sats" else "dest_num"
+    frames = []
+
+    for path in excel_paths:
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+
+        beta = extract_beta_from_path(path)
+        df = pd.read_excel(path)
+        df = parse_graph_num(df, fixed_col)
+        df["beta"] = beta
+        df["source_file"] = os.path.basename(path)
+
+        df_fixed = df[df[fixed_col] == fixed_value].copy()
+        if df_fixed.empty:
+            print(f"⚠ Warning: {os.path.basename(path)} has no {fixed_col} == {fixed_value}")
+            continue
+
+        frames.append(df_fixed)
+
+    if not frames:
+        raise ValueError(
+            f"No rows found after filtering fixed {fixed_type} value = {fixed_value}."
+        )
+
+    merged = pd.concat(frames, ignore_index=True)
+    beta_values = sorted(merged["beta"].unique())
+    beta_to_pos = {beta: idx for idx, beta in enumerate(beta_values)}
+
+    merged["beta_pos"] = merged["beta"].map(beta_to_pos)
+
+    x_ticks = [beta_to_pos[beta] for beta in beta_values]
+    x_tick_labels = [format_number_label(beta) for beta in beta_values]
+
+    print(f"📌 Fixed {fixed_type}: {fixed_value}")
+    print(f"📌 Beta values: {x_tick_labels}")
+
+    return merged, x_ticks, x_tick_labels
+
+
+def collect_plot_data(df, metric, x_col, selected_points):
     low_algos = ["DMTS", "TSMTA", "SSSP"]
     high_algos = ["OffPA"]
     algos = low_algos + high_algos
 
     std_col = f"{metric}_Std"
-    selected_points = list(range(x_start, x_end + 1, x_step))
-
     plot_data = {}
 
     for algo in algos:
@@ -107,10 +219,9 @@ def collect_plot_data(df, metric, x_col, x_start, x_end, x_step):
         x = df_algo[x_col]
         y = df_algo[metric] / 1000.0
 
-        if std_col in df_algo.columns:
-            y_err = df_algo[std_col] / 1000.0
+        if std_col in df_algo.columns and df_algo[std_col].notna().any():
+            y_err = (df_algo[std_col] / 1000.0).fillna(0.0)
         else:
-            print(f"⚠ Warning: No std column '{std_col}' found. Plotting without error bars.")
             y_err = None
 
         plot_data[algo] = {
@@ -124,8 +235,10 @@ def collect_plot_data(df, metric, x_col, x_start, x_end, x_step):
 
 def should_use_broken_axis(plot_data, break_ratio):
     """
-    若 OffPA 明顯比 DMTS / TSMTA / SSSP 大很多，才使用 broken y-axis。
-    判斷條件：
+    Use broken y-axis only when OffPA is clearly separated from
+    DMTS / TSMTA / SSSP.
+
+    Condition:
         min(OffPA) / max(DMTS, TSMTA, SSSP) >= break_ratio
     """
     low_algos = ["DMTS", "TSMTA", "SSSP"]
@@ -150,16 +263,13 @@ def should_use_broken_axis(plot_data, break_ratio):
         return False
 
     ratio = high_min / low_max
-
     print(f"🔎 OffPA separation ratio = {ratio:.2f}")
 
     return ratio >= break_ratio
 
 
 def add_top_legend(fig, axes):
-    """
-    合併所有 axes 的 legend，放在整張圖上方。
-    """
+    """Merge legends from all axes and place it at the top of the figure."""
     handles = []
     labels = []
 
@@ -199,19 +309,27 @@ def save_figure(output_path):
     plt.close()
 
 
+def configure_x_axis(ax, x_ticks, x_tick_labels, x_label):
+    if len(x_ticks) == 1:
+        margin = 0.5
+    else:
+        margin = max(0.5, (max(x_ticks) - min(x_ticks)) * 0.05)
+
+    ax.set_xlim(min(x_ticks) - margin, max(x_ticks) + margin)
+    ax.set_xticks(x_ticks)
+    ax.set_xticklabels(x_tick_labels)
+    ax.set_xlabel(x_label, labelpad=6)
+
+
 def plot_metric_normal(
     plot_data,
     metric,
     output_path,
-    x_start,
-    x_end,
-    x_step,
+    x_ticks,
+    x_tick_labels,
     x_label
 ):
-    """
-    一般 y-axis 圖。
-    適合 RC / CC 這種 OffPA 沒有大到需要斷軸的情況。
-    """
+    """Normal y-axis figure."""
     fig, ax = plt.subplots(figsize=(FIG_WIDTH, FIG_HEIGHT))
 
     algos = ["DMTS", "TSMTA", "SSSP", "OffPA"]
@@ -233,21 +351,14 @@ def plot_metric_normal(
             **STYLES[algo]
         )
 
-    margin = x_step * 0.15
-
-    ax.set_xlim(x_start - margin, x_end + margin)
-    ax.set_xticks(list(range(x_start, x_end + 1, x_step)))
-
-    ax.set_xlabel(x_label, labelpad=6)
+    configure_x_axis(ax, x_ticks, x_tick_labels, x_label)
     ax.set_ylabel(f"{metric} (K)", labelpad=6)
 
     ax.grid(True, linestyle="--", alpha=0.7)
     ax.tick_params(axis="both", which="major", labelsize=25)
-
     ax.yaxis.set_major_locator(MaxNLocator(nbins=5))
 
     add_top_legend(fig, [ax])
-
     plt.tight_layout(rect=(0.02, 0.02, 1, 0.93), pad=0.6)
 
     save_figure(output_path)
@@ -257,15 +368,14 @@ def plot_metric_broken(
     plot_data,
     metric,
     output_path,
-    x_start,
-    x_end,
-    x_step,
+    x_ticks,
+    x_tick_labels,
     x_label
 ):
     """
     Broken y-axis version:
-    - ax_bottom: only DMTS / TSMTA / SSSP
-    - ax_top: only OffPA
+    - ax_bottom: DMTS / TSMTA / SSSP
+    - ax_top: OffPA
     """
     fig, (ax_top, ax_bottom) = plt.subplots(
         2, 1,
@@ -279,7 +389,6 @@ def plot_metric_broken(
 
     low_algos = ["DMTS", "TSMTA", "SSSP"]
 
-    # 下方：低值算法
     for algo in low_algos:
         if algo not in plot_data:
             continue
@@ -297,7 +406,6 @@ def plot_metric_broken(
             **STYLES[algo]
         )
 
-    # 上方：OffPA
     if "OffPA" in plot_data:
         data = plot_data["OffPA"]
 
@@ -312,7 +420,6 @@ def plot_metric_broken(
             **STYLES["OffPA"]
         )
 
-    # ===== 自動設定 y-axis 範圍 =====
     low_values = []
     high_values = []
 
@@ -357,14 +464,8 @@ def plot_metric_broken(
     ax_top.yaxis.set_major_locator(MaxNLocator(nbins=2, prune="lower"))
     ax_bottom.yaxis.set_major_locator(MaxNLocator(nbins=4))
 
-    # ===== x-axis 設定 =====
-    margin = x_step * 0.15
-    ax_bottom.set_xlim(x_start - margin, x_end + margin)
-    ax_bottom.set_xticks(list(range(x_start, x_end + 1, x_step)))
+    configure_x_axis(ax_bottom, x_ticks, x_tick_labels, x_label)
 
-    ax_bottom.set_xlabel(x_label, labelpad=6)
-
-    # 共用 y label
     fig.text(
         0.015, 0.5,
         f"{metric} (K)",
@@ -377,14 +478,12 @@ def plot_metric_broken(
         ax.grid(True, linestyle="--", alpha=0.7)
         ax.tick_params(axis="both", which="major", labelsize=25)
 
-    # 隱藏中間 spine
     ax_top.spines["bottom"].set_visible(False)
     ax_bottom.spines["top"].set_visible(False)
 
     ax_top.tick_params(labeltop=False)
     ax_bottom.xaxis.tick_bottom()
 
-    # ===== 畫 y-axis break 的斜線 =====
     d = 0.012
 
     kwargs = dict(
@@ -403,7 +502,6 @@ def plot_metric_broken(
     ax_bottom.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)
 
     add_top_legend(fig, [ax_bottom, ax_top])
-
     plt.tight_layout(rect=(0.06, 0.02, 1, 0.93), pad=0.6)
 
     save_figure(output_path)
@@ -413,10 +511,9 @@ def plot_metric_auto(
     df,
     metric,
     output_path,
-    x_start,
-    x_end,
-    x_step,
     x_col,
+    x_ticks,
+    x_tick_labels,
     x_label,
     break_ratio
 ):
@@ -424,9 +521,7 @@ def plot_metric_auto(
         df=df,
         metric=metric,
         x_col=x_col,
-        x_start=x_start,
-        x_end=x_end,
-        x_step=x_step
+        selected_points=x_ticks
     )
 
     use_broken = should_use_broken_axis(plot_data, break_ratio)
@@ -437,9 +532,8 @@ def plot_metric_auto(
             plot_data=plot_data,
             metric=metric,
             output_path=output_path,
-            x_start=x_start,
-            x_end=x_end,
-            x_step=x_step,
+            x_ticks=x_ticks,
+            x_tick_labels=x_tick_labels,
             x_label=x_label
         )
     else:
@@ -448,49 +542,63 @@ def plot_metric_auto(
             plot_data=plot_data,
             metric=metric,
             output_path=output_path,
-            x_start=x_start,
-            x_end=x_end,
-            x_step=x_step,
+            x_ticks=x_ticks,
+            x_tick_labels=x_tick_labels,
             x_label=x_label
         )
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot simulation results with automatic broken y-axis."
+        description="Plot simulation results with automatic broken y-axis, including beta sweep mode."
     )
 
     parser.add_argument(
-        "excel_path",
-        help="Path to the results Excel file."
+        "excel_paths",
+        nargs="+",
+        help="Path(s) to result Excel file(s). Use multiple files for --x beta."
     )
 
     parser.add_argument(
         "--x",
-        choices=["sats", "dests"],
+        choices=["sats", "dests", "beta"],
         required=True,
-        help="Choose x-axis type: 'sats' for number of satellites, 'dests' for number of destinations."
+        help="Choose x-axis type: sats, dests, or beta."
+    )
+
+    parser.add_argument(
+        "--fixed-type",
+        choices=["sats", "dests"],
+        default=None,
+        help="Only for --x beta. Fixed dimension represented by graph number. Can often be inferred from filename prefix."
+    )
+
+    parser.add_argument(
+        "--fixed",
+        type=int,
+        default=None,
+        help="Only for --x beta. Fixed sat/dest value, e.g., --fixed 300 or --fixed 50."
     )
 
     parser.add_argument(
         "--x-start",
         type=int,
         default=X_START,
-        help="Start value of x-axis."
+        help="Start value of x-axis for original sats/dests mode."
     )
 
     parser.add_argument(
         "--x-end",
         type=int,
         default=X_END,
-        help="End value of x-axis."
+        help="End value of x-axis for original sats/dests mode."
     )
 
     parser.add_argument(
         "--x-step",
         type=int,
         default=X_STEP,
-        help="Step size of x-axis."
+        help="Step size of x-axis for original sats/dests mode."
     )
 
     parser.add_argument(
@@ -502,29 +610,56 @@ def main():
 
     args = parser.parse_args()
 
-    excel_path = args.excel_path
-
-    if not os.path.exists(excel_path):
-        print(f"❌ File not found: {excel_path}")
-        sys.exit(1)
+    for path in args.excel_paths:
+        if not os.path.exists(path):
+            print(f"❌ File not found: {path}")
+            sys.exit(1)
 
     x_config = get_x_config(args.x)
     x_col = x_config["x_col"]
     x_label = x_config["x_label"]
 
-    print(f"📘 Loading Excel: {excel_path}")
     print(f"📌 X-axis mode: {args.x}")
     print(f"📌 X-axis label: {x_label}")
     print(f"📌 Break ratio threshold: {args.break_ratio}")
 
-    df = pd.read_excel(excel_path)
+    if args.x == "beta":
+        if args.fixed is None:
+            print("❌ --fixed is required when --x beta")
+            sys.exit(1)
 
-    # 從 graph 欄位解析 x 軸數量，例如 graph_50, graph_150, ...
-    df[x_col] = df["graph"].str.extract(r"graph_(\d+)").astype(int)
+        fixed_type = args.fixed_type or infer_fixed_type_from_paths(args.excel_paths)
+        if fixed_type is None:
+            print("❌ Cannot infer --fixed-type. Please provide --fixed-type sats or --fixed-type dests.")
+            sys.exit(1)
 
-    excel_name = os.path.splitext(os.path.basename(excel_path))[0]
+        print(f"📘 Loading beta Excel files: {', '.join(os.path.basename(p) for p in args.excel_paths)}")
 
-    base_dir = f"img/{excel_name}_{args.x}"
+        df, x_ticks, x_tick_labels = load_beta_excels(
+            excel_paths=args.excel_paths,
+            fixed_type=fixed_type,
+            fixed_value=args.fixed
+        )
+
+        base_name = f"beta_{fixed_type}_fixed_{args.fixed}"
+        base_dir = f"img/{base_name}"
+
+    else:
+        if len(args.excel_paths) != 1:
+            print("❌ Original sats/dests mode accepts exactly one Excel file. Use --x beta for multiple files.")
+            sys.exit(1)
+
+        excel_path = args.excel_paths[0]
+        print(f"📘 Loading Excel: {excel_path}")
+
+        df = load_single_excel_for_original_mode(excel_path, x_col)
+
+        x_ticks = list(range(args.x_start, args.x_end + 1, args.x_step))
+        x_tick_labels = [str(v) for v in x_ticks]
+
+        excel_name = os.path.splitext(os.path.basename(excel_path))[0]
+        base_dir = f"img/{excel_name}_{args.x}"
+
     os.makedirs(base_dir, exist_ok=True)
 
     metrics = ["Total", "BC", "CC", "RC"]
@@ -533,17 +668,16 @@ def main():
         metric_dir = os.path.join(base_dir, metric)
         os.makedirs(metric_dir, exist_ok=True)
 
-        filename = f"{excel_name}_{args.x}_{metric}.png"
+        filename = f"{os.path.basename(base_dir)}_{metric}.png"
         output_path = os.path.join(metric_dir, filename)
 
         plot_metric_auto(
             df=df,
             metric=metric,
             output_path=output_path,
-            x_start=args.x_start,
-            x_end=args.x_end,
-            x_step=args.x_step,
             x_col=x_col,
+            x_ticks=x_ticks,
+            x_tick_labels=x_tick_labels,
             x_label=x_label,
             break_ratio=args.break_ratio
         )
@@ -553,3 +687,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    
+# 固定sats/dests然後x軸用beta, y用BC, RC, CC, total
+
+# python plot_results.py dests_beta_100.xlsx --x dests --break-ratio 1
+# python plot_results.py sats_beta_*.xlsx --x beta --fixed-type sats --fixed 300 --break-ratio 5
