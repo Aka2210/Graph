@@ -15,7 +15,7 @@
     "thr_cloud_to_cloud": 3200.0,
     "region_dist_thr": 1000.0,
     "beta_values": [1, 10, 50, 100],
-    "pdta_levels": [1, 2, 3],
+    "pdta_levels": [3],
     "sweep_x": "dests",
     "num_runs": 1,
     "base_seed": 42,

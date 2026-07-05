@@ -162,7 +162,7 @@ def TSMTA(
     TIG_Interval = {k: v.copy() for k, v in TIG.items()}
     CTIG_Interval = {k: v.copy() for k, v in CTIG.items()}
     while dests:
-        T_best = nx.Graph()
+        T_best = nx.DiGraph()
         i_best = 1
         t1_best = 1
         t2_best = 1
@@ -190,7 +190,20 @@ def TSMTA(
                         time_pdta += time.time() - t0
                         PDTA_cache[cache_key] = (tmp_k, tmp_min, records)
                     if tmp_min < T_Density_min:
-                        T_Density_min, T_best, i_best, t1_best, t2_best = tmp_min, tmp_k.copy(), idx, i, j
+                        if tmp_k.number_of_edges() > 0 and si not in tmp_k:
+                            raise AssertionError(
+                                f"[TSMTA] PDTA returned invalid tree without source. "
+                                f"PDTA_k={pdta_level}, src={si}, interval=({i},{j}), "
+                                f"nodes={list(tmp_k.nodes())[:20]}"
+                            )
+
+                        T_Density_min, T_best, i_best, t1_best, t2_best = (
+                            tmp_min,
+                            tmp_k.copy(),
+                            idx,
+                            i,
+                            j,
+                        )
                     else:
                         cnt+=1
                     if cnt >= 1:
@@ -219,7 +232,20 @@ def TSMTA(
                             tmp_min = PDTA.PDTA_Density(tmp_k, 1, local_dests) 
                             Choosing_cache[cache_key] = (tmp_k, tmp_min)
                             if tmp_min < T_Density_min:
-                                T_Density_min, T_best, i_best, t1_best, t2_best = tmp_min, tmp_k.copy(), idx, i, j
+                                if tmp_k.number_of_edges() > 0 and si not in tmp_k:
+                                    raise AssertionError(
+                                        f"[TSMTA] Choosing_cache produced invalid tree without source. "
+                                        f"PDTA_k={pdta_level}, src={si}, interval=({i},{j}), "
+                                        f"k={k}, nodes={list(tmp_k.nodes())[:20]}"
+                                    )
+
+                                T_Density_min, T_best, i_best, t1_best, t2_best = (
+                                    tmp_min,
+                                    tmp_k.copy(),
+                                    idx,
+                                    i,
+                                    j,
+                                )
         remove = [n for n, d in T_best.nodes(data=True) if d["type"] == TVM.USER.value]
         if len(remove) == 0:
             break 
