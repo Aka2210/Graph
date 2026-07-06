@@ -12,6 +12,4 @@ __pycache__/
 .vscode/
 *.patch
 output_graphs/*
-img/*
 results*
-*.xlsx
